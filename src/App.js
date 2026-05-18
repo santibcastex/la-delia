@@ -3,11 +3,9 @@ import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { initializeApp } from 'firebase/app';
 import { getFirestore, collection, getDocs, addDoc } from 'firebase/firestore';
-import { getAuth, signOut, onAuthStateChanged } from 'firebase/auth';
-import { GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
+import { getAuth, signOut, onAuthStateChanged, GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
 import './App.css';
 
-// Firebase config
 const firebaseConfig = {
   apiKey: "AIzaSyAmS8djT1pwnEOjcWTljmh5KDgAOnTi8so",
   authDomain: "la-delia.firebaseapp.com",
@@ -21,7 +19,6 @@ const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 const auth = getAuth(app);
 
-// GeoJSON de postreros
 const POSTREROS_GEOJSON = {
   "type": "FeatureCollection",
   "features": [
@@ -53,21 +50,64 @@ const HACIENDA_INICIAL = [
   { id: 5, nombre: 'Vaquillonas +2 Años', cantidad: 219, peso_promedio: 420, potrero: null }
 ];
 
-function App() {
+function MapView({ onPotreroClick }) {
   const mapContainer = useRef(null);
   const map = useRef(null);
+
+  useEffect(() => {
+    map.current = L.map(mapContainer.current).setView([-36.905, -58.607], 13);
+    L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+      attribution: 'Esri', maxZoom: 18
+    }).addTo(map.current);
+
+    const convertCoords = (coords) =>
+      coords.map(ring => ring.map(pt => [pt[1] / 111000 - 36.9, pt[0] / 111000 - 58.6]));
+
+    POSTREROS_GEOJSON.features.forEach(feature => {
+      const { geometry, properties: props } = feature;
+      const coords = geometry.type === 'MultiPolygon'
+        ? geometry.coordinates.map(poly => poly.map(ring => convertCoords([ring])[0]))
+        : convertCoords(geometry.coordinates);
+
+      const style = { color: '#c41e3a', weight: 2, opacity: 0.9, fillColor: '#2d5016', fillOpacity: 0.4 };
+      const polygon = geometry.type === 'MultiPolygon'
+        ? L.multiPolygon(coords, style)
+        : L.polygon(coords, style);
+
+      polygon.bindPopup(`<strong>Potrero ${props.nombre}</strong><br/>${props.ha.toFixed(1)} ha`);
+      polygon.on('click', () => onPotreroClick(props));
+      polygon.on('mouseover', function () { this.setStyle({ weight: 3, fillOpacity: 0.6 }); });
+      polygon.on('mouseout', function () { this.setStyle({ weight: 2, fillOpacity: 0.4 }); });
+      polygon.addTo(map.current);
+
+      const center = polygon.getBounds().getCenter();
+      L.marker(center, {
+        icon: L.divIcon({
+          html: `<div style="text-align:center;font-family:'Courier New',monospace;color:#ffeb3b;text-shadow:1px 1px 3px rgba(0,0,0,0.7);font-weight:bold;pointer-events:none"><div style="font-size:13px">${props.nombre}</div><div style="font-size:12px">${props.ha.toFixed(1)} ha</div></div>`,
+          className: 'potrero-label',
+          iconSize: [70, 45]
+        })
+      }).addTo(map.current);
+    });
+
+    return () => { map.current.remove(); map.current = null; };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  return <div ref={mapContainer} style={{ width: '100%', height: '100%' }} />;
+}
+
+function App() {
   const [user, setUser] = useState(null);
+  const [authReady, setAuthReady] = useState(false);
   const [hacienda, setHacienda] = useState(HACIENDA_INICIAL);
   const [selectedPotrero, setSelectedPotrero] = useState(null);
-  const [loading, setLoading] = useState(true);
   const [draggedCategory, setDraggedCategory] = useState(null);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
       setUser(currentUser);
-      if (currentUser) {
-        cargarHaciendaDeFirestore();
-      }
+      setAuthReady(true);
+      if (currentUser) cargarHaciendaDeFirestore();
     });
     return unsubscribe;
   }, []);
@@ -81,7 +121,7 @@ function App() {
         }
         setHacienda(HACIENDA_INICIAL);
       } else {
-        const data = snapshot.docs.map(doc => ({ ...doc.data(), docId: doc.id }));
+        const data = snapshot.docs.map(d => ({ ...d.data(), docId: d.id }));
         setHacienda(data);
       }
     } catch (error) {
@@ -89,40 +129,9 @@ function App() {
     }
   };
 
-  useEffect(() => {
-    if (map.current || !mapContainer.current) return;
-
-    map.current = L.map(mapContainer.current).setView([-36.905, -58.607], 13);
-    L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { attribution: 'Esri', maxZoom: 18 }).addTo(map.current);
-
-    const convertCoords = (coords) => coords.map(ring => ring.map(pt => [pt[1] / 111000 - 36.9, pt[0] / 111000 - 58.6]));
-
-    POSTREROS_GEOJSON.features.forEach(feature => {
-      const geometry = feature.geometry;
-      const props = feature.properties;
-      let coords = geometry.type === 'MultiPolygon' ? geometry.coordinates.map(polygon => polygon.map(ring => convertCoords([ring])[0])) : convertCoords(geometry.coordinates);
-
-      const polygon = geometry.type === 'MultiPolygon' ? L.multiPolygon(coords, { color: '#c41e3a', weight: 2, opacity: 0.9, fillColor: '#2d5016', fillOpacity: 0.4 }) : L.polygon(coords, { color: '#c41e3a', weight: 2, opacity: 0.9, fillColor: '#2d5016', fillOpacity: 0.4 });
-
-      polygon.bindPopup(`<strong>Potrero ${props.nombre}</strong><br/>${props.ha.toFixed(1)} ha`);
-      polygon.on('click', () => setSelectedPotrero(props));
-      polygon.on('mouseover', function() { this.setStyle({ weight: 3, fillOpacity: 0.6 }); });
-      polygon.on('mouseout', function() { this.setStyle({ weight: 2, fillOpacity: 0.4 }); });
-      polygon.addTo(map.current);
-
-      const bounds = polygon.getBounds();
-      const center = bounds.getCenter();
-      L.marker(center, { icon: L.divIcon({ html: `<div style="text-align: center; font-family: 'Courier New', monospace; color: #ffeb3b; text-shadow: 1px 1px 3px rgba(0,0,0,0.7); font-weight: bold; pointer-events: none;"><div style="font-size: 13px;">${props.nombre}</div><div style="font-size: 12px;">${props.ha.toFixed(1)} ha</div></div>`, className: 'potrero-label', iconSize: [70, 45] }) }).addTo(map.current);
-    });
-
-    setLoading(false);
-    return () => { if (map.current) { map.current.remove(); map.current = null; } };
-  }, [user]);
-
   const handleGoogleSignIn = async () => {
     try {
-      const provider = new GoogleAuthProvider();
-      await signInWithPopup(auth, provider);
+      await signInWithPopup(auth, new GoogleAuthProvider());
     } catch (error) {
       console.error('Error:', error);
     }
@@ -140,13 +149,23 @@ function App() {
   const totalAnimales = hacienda.reduce((sum, h) => sum + (h.cantidad || 0), 0);
   const postrerosOcupados = hacienda.filter(h => h.potrero).length;
 
+  if (!authReady) {
+    return (
+      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', backgroundColor: '#0a0a0a', color: '#fff', fontFamily: 'sans-serif' }}>
+        Cargando...
+      </div>
+    );
+  }
+
   if (!user) {
     return (
       <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', backgroundColor: '#0a0a0a', fontFamily: 'sans-serif', flexDirection: 'column' }}>
         <div style={{ textAlign: 'center', backgroundColor: '#1a1a1a', padding: '3rem', borderRadius: '8px', border: '1px solid #333', maxWidth: '400px', color: '#fff' }}>
           <h1 style={{ fontSize: '3rem', margin: '0 0 0.5rem 0', letterSpacing: '1px', fontWeight: '300' }}>Ea La Delia</h1>
           <p style={{ fontSize: '1.1rem', color: '#aaa', margin: '0 0 2rem 0' }}>Gestión ganadera en tiempo real</p>
-          <button onClick={handleGoogleSignIn} style={{ width: '100%', padding: '1rem', backgroundColor: '#4285f4', color: '#fff', border: 'none', borderRadius: '4px', fontSize: '1rem', fontWeight: '600', cursor: 'pointer' }}>Iniciar sesión con Google</button>
+          <button onClick={handleGoogleSignIn} style={{ width: '100%', padding: '1rem', backgroundColor: '#4285f4', color: '#fff', border: 'none', borderRadius: '4px', fontSize: '1rem', fontWeight: '600', cursor: 'pointer' }}>
+            Iniciar sesión con Google
+          </button>
         </div>
       </div>
     );
@@ -161,14 +180,15 @@ function App() {
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
           <span style={{ fontSize: '0.9rem', color: '#aaa' }}>{user.displayName || user.email}</span>
-          <button onClick={handleSignOut} style={{ padding: '0.5rem 1rem', backgroundColor: '#c41e3a', color: '#fff', border: 'none', borderRadius: '3px', cursor: 'pointer', fontSize: '0.85rem', fontWeight: '600' }}>Cerrar sesión</button>
+          <button onClick={handleSignOut} style={{ padding: '0.5rem 1rem', backgroundColor: '#c41e3a', color: '#fff', border: 'none', borderRadius: '3px', cursor: 'pointer', fontSize: '0.85rem', fontWeight: '600' }}>
+            Cerrar sesión
+          </button>
         </div>
       </header>
 
       <div style={{ display: 'flex', flex: 1, gap: '1px', overflow: 'hidden' }}>
         <div style={{ flex: 2, position: 'relative' }}>
-          <div ref={mapContainer} style={{ width: '100%', height: '100%' }} />
-          {loading && <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', backgroundColor: 'rgba(0,0,0,0.8)', padding: '1rem 2rem', borderRadius: '4px', fontSize: '0.95rem' }}>Cargando mapa...</div>}
+          <MapView onPotreroClick={setSelectedPotrero} />
         </div>
 
         <div style={{ flex: 1, backgroundColor: '#1a1a1a', borderLeft: '1px solid #333', overflow: 'auto', padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
@@ -190,10 +210,18 @@ function App() {
           )}
 
           <div style={{ flex: 1 }}>
-            <h3 style={{ fontSize: '1.1rem', fontWeight: '600', margin: '0 0 1rem 0', textTransform: 'uppercase', letterSpacing: '0.5px', borderBottom: '1px solid #333', paddingBottom: '0.75rem' }}>Hacienda (arrastrá para mover)</h3>
+            <h3 style={{ fontSize: '1.1rem', fontWeight: '600', margin: '0 0 1rem 0', textTransform: 'uppercase', letterSpacing: '0.5px', borderBottom: '1px solid #333', paddingBottom: '0.75rem' }}>
+              Hacienda (arrastrá para mover)
+            </h3>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', maxHeight: '300px', overflowY: 'auto' }}>
               {hacienda.filter(h => h.cantidad > 0).map((cat) => (
-                <div key={cat.id} draggable onDragStart={() => setDraggedCategory(cat.id)} onDragEnd={() => setDraggedCategory(null)} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.75rem', backgroundColor: '#2a2a2a', borderRadius: '3px', borderLeft: '3px solid #c41e3a', fontSize: '0.9rem', cursor: 'move' }}>
+                <div
+                  key={cat.id}
+                  draggable
+                  onDragStart={() => setDraggedCategory(cat.id)}
+                  onDragEnd={() => setDraggedCategory(null)}
+                  style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.75rem', backgroundColor: draggedCategory === cat.id ? '#3a3a3a' : '#2a2a2a', borderRadius: '3px', borderLeft: '3px solid #c41e3a', fontSize: '0.9rem', cursor: 'move' }}
+                >
                   <div>
                     <span style={{ display: 'block', fontWeight: '600', marginBottom: '0.25rem' }}>{cat.nombre}</span>
                     <span style={{ display: 'block', fontSize: '0.8rem', color: '#aaa' }}>{cat.potrero ? `Potrero ${cat.potrero}` : 'Sin asignar'}</span>
