@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { initializeApp } from 'firebase/app';
-import { getFirestore, collection, getDocs, addDoc, updateDoc, doc } from 'firebase/firestore';
+import { getFirestore, collection, getDocs, addDoc } from 'firebase/firestore';
 import { getAuth, signOut, onAuthStateChanged } from 'firebase/auth';
 import { GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
 import './App.css';
@@ -84,20 +84,6 @@ function App() {
         const data = snapshot.docs.map(doc => ({ ...doc.data(), docId: doc.id }));
         setHacienda(data);
       }
-    } catch (error) {
-      console.error('Error:', error);
-    }
-  };
-
-  const moverAPotrero = async (categoriaId, postreroNombre) => {
-    try {
-      const categoriaDoc = hacienda.find(h => h.id === categoriaId);
-      if (!categoriaDoc) return;
-
-      const docRef = doc(db, 'hacienda', categoriaDoc.docId);
-      await updateDoc(docRef, { potrero: postreroNombre, fecha_ingreso: new Date().toISOString() });
-
-      setHacienda(prev => prev.map(h => h.id === categoriaId ? { ...h, potrero: postreroNombre } : h));
     } catch (error) {
       console.error('Error:', error);
     }
