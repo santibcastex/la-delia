@@ -2,8 +2,8 @@ import React, { useEffect, useRef, useState } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { initializeApp } from 'firebase/app';
-import { getFirestore, collection, getDocs, addDoc, updateDoc, doc, onAuthStateChanged } from 'firebase/firestore';
-import { getAuth, signOut } from 'firebase/auth';
+import { getFirestore, collection, getDocs, addDoc, updateDoc, doc } from 'firebase/firestore';
+import { getAuth, signOut, onAuthStateChanged } from 'firebase/auth';
 import { GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
 import './App.css';
 
