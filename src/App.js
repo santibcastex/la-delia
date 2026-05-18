@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
+import proj4 from 'proj4';
 import { initializeApp } from 'firebase/app';
 import { getFirestore, collection, getDocs, addDoc } from 'firebase/firestore';
 import { getAuth, signOut, onAuthStateChanged, GoogleAuthProvider, signInWithRedirect, getRedirectResult } from 'firebase/auth';
@@ -14,6 +15,9 @@ const firebaseConfig = {
   messagingSenderId: "587773821917",
   appId: "1:587773821917:web:542ef9f1c9f28e342d2c34"
 };
+
+proj4.defs('EPSG:22175', '+proj=tmerc +lat_0=-90 +lon_0=-60 +k=1 +x_0=5500000 +y_0=0 +ellps=intl +towgs84=-148,136,90,0,0,0,0 +units=m +no_defs');
+const toLatLng = (x, y) => { const [lng, lat] = proj4('EPSG:22175', 'WGS84', [x, y]); return [lat, lng]; };
 
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
@@ -60,16 +64,15 @@ function MapView({ onPotreroClick }) {
       attribution: 'Esri', maxZoom: 18
     }).addTo(map.current);
 
-    const convertCoords = (coords) =>
-      coords.map(ring => ring.map(pt => [pt[1] / 111000 - 36.9, pt[0] / 111000 - 58.6]));
+    const convertRing = (ring) => ring.map(pt => toLatLng(pt[0], pt[1]));
 
     POSTREROS_GEOJSON.features.forEach(feature => {
       const { geometry, properties: props } = feature;
       const style = { color: '#c41e3a', weight: 2, opacity: 0.9, fillColor: '#2d5016', fillOpacity: 0.4 };
 
       const polygonRings = geometry.type === 'MultiPolygon'
-        ? geometry.coordinates.map(poly => poly.map(ring => convertCoords([ring])[0]))
-        : [convertCoords(geometry.coordinates)];
+        ? geometry.coordinates.map(poly => poly.map(ring => convertRing(ring)))
+        : [geometry.coordinates.map(ring => convertRing(ring))];
 
       let firstPolygon = null;
       polygonRings.forEach(rings => {
