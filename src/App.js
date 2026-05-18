@@ -90,7 +90,7 @@ function App() {
   };
 
   useEffect(() => {
-    if (map.current) return;
+    if (map.current || !mapContainer.current) return;
 
     map.current = L.map(mapContainer.current).setView([-36.905, -58.607], 13);
     L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { attribution: 'Esri', maxZoom: 18 }).addTo(map.current);
@@ -117,7 +117,7 @@ function App() {
 
     setLoading(false);
     return () => { if (map.current) { map.current.remove(); map.current = null; } };
-  }, [draggedCategory]);
+  }, [user]);
 
   const handleGoogleSignIn = async () => {
     try {
