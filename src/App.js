@@ -3,7 +3,7 @@ import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { initializeApp } from 'firebase/app';
 import { getFirestore, collection, getDocs, addDoc } from 'firebase/firestore';
-import { getAuth, signOut, onAuthStateChanged, GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
+import { getAuth, signOut, onAuthStateChanged, GoogleAuthProvider, signInWithRedirect, getRedirectResult } from 'firebase/auth';
 import './App.css';
 
 const firebaseConfig = {
@@ -65,22 +65,24 @@ function MapView({ onPotreroClick }) {
 
     POSTREROS_GEOJSON.features.forEach(feature => {
       const { geometry, properties: props } = feature;
-      const coords = geometry.type === 'MultiPolygon'
-        ? geometry.coordinates.map(poly => poly.map(ring => convertCoords([ring])[0]))
-        : convertCoords(geometry.coordinates);
-
       const style = { color: '#c41e3a', weight: 2, opacity: 0.9, fillColor: '#2d5016', fillOpacity: 0.4 };
-      const polygon = geometry.type === 'MultiPolygon'
-        ? L.multiPolygon(coords, style)
-        : L.polygon(coords, style);
 
-      polygon.bindPopup(`<strong>Potrero ${props.nombre}</strong><br/>${props.ha.toFixed(1)} ha`);
-      polygon.on('click', () => onPotreroClick(props));
-      polygon.on('mouseover', function () { this.setStyle({ weight: 3, fillOpacity: 0.6 }); });
-      polygon.on('mouseout', function () { this.setStyle({ weight: 2, fillOpacity: 0.4 }); });
-      polygon.addTo(map.current);
+      const polygonRings = geometry.type === 'MultiPolygon'
+        ? geometry.coordinates.map(poly => poly.map(ring => convertCoords([ring])[0]))
+        : [convertCoords(geometry.coordinates)];
 
-      const center = polygon.getBounds().getCenter();
+      let firstPolygon = null;
+      polygonRings.forEach(rings => {
+        const polygon = L.polygon(rings, style);
+        polygon.bindPopup(`<strong>Potrero ${props.nombre}</strong><br/>${props.ha.toFixed(1)} ha`);
+        polygon.on('click', () => onPotreroClick(props));
+        polygon.on('mouseover', function () { this.setStyle({ weight: 3, fillOpacity: 0.6 }); });
+        polygon.on('mouseout', function () { this.setStyle({ weight: 2, fillOpacity: 0.4 }); });
+        polygon.addTo(map.current);
+        if (!firstPolygon) firstPolygon = polygon;
+      });
+
+      const center = firstPolygon.getBounds().getCenter();
       L.marker(center, {
         icon: L.divIcon({
           html: `<div style="text-align:center;font-family:'Courier New',monospace;color:#ffeb3b;text-shadow:1px 1px 3px rgba(0,0,0,0.7);font-weight:bold;pointer-events:none"><div style="font-size:13px">${props.nombre}</div><div style="font-size:12px">${props.ha.toFixed(1)} ha</div></div>`,
@@ -104,6 +106,7 @@ function App() {
   const [draggedCategory, setDraggedCategory] = useState(null);
 
   useEffect(() => {
+    getRedirectResult(auth).catch(() => {});
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
       setUser(currentUser);
       setAuthReady(true);
@@ -131,7 +134,7 @@ function App() {
 
   const handleGoogleSignIn = async () => {
     try {
-      await signInWithPopup(auth, new GoogleAuthProvider());
+      await signInWithRedirect(auth, new GoogleAuthProvider());
     } catch (error) {
       console.error('Error:', error);
     }
