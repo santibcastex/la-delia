@@ -3,7 +3,7 @@ import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { initializeApp } from 'firebase/app';
 import { getFirestore, collection, getDocs, addDoc, updateDoc, doc, setDoc } from 'firebase/firestore';
-import { getAuth, signOut, onAuthStateChanged, GoogleAuthProvider, signInWithRedirect, getRedirectResult } from 'firebase/auth';
+import { getAuth, signOut, onAuthStateChanged, GoogleAuthProvider, signInWithRedirect, signInWithPopup, getRedirectResult } from 'firebase/auth';
 import './App.css';
 
 
@@ -173,6 +173,7 @@ function MapView({ onPotreroClick, modoMover, ndviActive, ndviToken, ndviDate })
 function App() {
   const [user, setUser] = useState(null);
   const [authReady, setAuthReady] = useState(false);
+  const [authError, setAuthError] = useState(null);
   const [hacienda, setHacienda] = useState(HACIENDA_INICIAL);
   const [historial, setHistorial] = useState({});
   const [selectedPotrero, setSelectedPotrero] = useState(null);
@@ -187,7 +188,11 @@ function App() {
   const NDVI_DATES = getNdviDates();
 
   useEffect(() => {
-    getRedirectResult(auth).catch(() => {});
+    getRedirectResult(auth).catch((err) => {
+      if (err.code !== 'auth/no-auth-event') {
+        setAuthError(err.message || err.code);
+      }
+    });
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
       setUser(currentUser);
       setAuthReady(true);
@@ -296,10 +301,21 @@ function App() {
   };
 
   const handleGoogleSignIn = async () => {
+    setAuthError(null);
+    const provider = new GoogleAuthProvider();
     try {
-      await signInWithRedirect(auth, new GoogleAuthProvider());
-    } catch (error) {
-      console.error('Error:', error);
+      await signInWithPopup(auth, provider);
+    } catch (popupErr) {
+      // Popup bloqueado por COOP o por el browser — fallback a redirect
+      if (popupErr.code === 'auth/popup-blocked' || popupErr.code === 'auth/cancelled-popup-request' || popupErr.code === 'auth/popup-closed-by-user') {
+        try {
+          await signInWithRedirect(auth, provider);
+        } catch (redirectErr) {
+          setAuthError(redirectErr.message || redirectErr.code);
+        }
+      } else {
+        setAuthError(popupErr.message || popupErr.code);
+      }
     }
   };
 
@@ -353,6 +369,11 @@ function App() {
           <button onClick={handleGoogleSignIn} style={{ width: '100%', padding: '1rem', backgroundColor: '#4285f4', color: '#fff', border: 'none', borderRadius: '4px', fontSize: '1rem', fontWeight: '600', cursor: 'pointer' }}>
             Iniciar sesión con Google
           </button>
+          {authError && (
+            <div style={{ marginTop: '1rem', padding: '0.75rem', backgroundColor: '#3a1a1a', border: '1px solid #ff6b6b', borderRadius: '4px', color: '#ff6b6b', fontSize: '0.8rem', textAlign: 'left', wordBreak: 'break-word' }}>
+              {authError}
+            </div>
+          )}
         </div>
       </div>
     );
