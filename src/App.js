@@ -74,41 +74,44 @@ const STYLE_NORMAL  = { color: '#c41e3a', weight: 2, opacity: 0.9, fillColor: '#
 const STYLE_ORIGEN  = { color: '#ff9800', weight: 3, opacity: 1,   fillColor: '#ff9800', fillOpacity: 0.5 };
 const STYLE_DESTINO = { color: '#4caf50', weight: 2, opacity: 0.9, fillColor: '#4caf50', fillOpacity: 0.45 };
 
+// Coordenadas de los potreros aplanadas para la máscara NDVI (rings de cada MultiPolygon)
+const MASK_RINGS = POSTREROS_GEOJSON.features.flatMap(f =>
+  f.geometry.coordinates.flatMap(poly =>
+    poly.map(ring => ring.map(([lng, lat]) => [lat, lng]))
+  )
+);
+
 function MapView({ onPotreroClick, modoMover, ndviActive, ndviDate }) {
   const mapContainer = useRef(null);
   const map = useRef(null);
   const layersRef = useRef({});
   const ndviLayerRef = useRef(null);
+  const maskLayerRef = useRef(null);
   const onClickRef = useRef(onPotreroClick);
 
   useEffect(() => { onClickRef.current = onPotreroClick; }, [onPotreroClick]);
 
-  // Capa NDVI — agregar/quitar según config
+  // Capa NDVI + máscara fuera del campo
   useEffect(() => {
     if (!map.current) return;
-    if (ndviLayerRef.current) {
-      map.current.removeLayer(ndviLayerRef.current);
-      ndviLayerRef.current = null;
-    }
+    if (ndviLayerRef.current) { map.current.removeLayer(ndviLayerRef.current); ndviLayerRef.current = null; }
+    if (maskLayerRef.current) { map.current.removeLayer(maskLayerRef.current); maskLayerRef.current = null; }
+
     if (ndviActive && ndviDate) {
       const timeRange = `${ndviDate}T00:00:00Z/${ndviDate}T23:59:59Z`;
-      // /api/ndvi-tile obtiene su propio token y calcula NDVI desde Sentinel-2 L2A
-      ndviLayerRef.current = L.tileLayer.wms(
-        '/api/ndvi-tile',
-        {
-          layers: 'NDVI',
-          format: 'image/png',
-          transparent: true,
-          version: '1.3.0',
-          time: timeRange,
-          opacity: 0.82,
-          attribution: 'NDVI Sentinel-2 © Copernicus'
-        }
-      );
-      ndviLayerRef.current.on('tileerror', (e) => {
-        console.error('NDVI tile error:', e.tile.src);
+      ndviLayerRef.current = L.tileLayer.wms('/api/ndvi-tile', {
+        layers: 'NDVI', format: 'image/png', transparent: true,
+        version: '1.3.0', time: timeRange, opacity: 0.88,
+        attribution: 'NDVI Sentinel-2 © Copernicus'
       });
+      ndviLayerRef.current.on('tileerror', (e) => console.error('NDVI tile error:', e.tile.src));
       ndviLayerRef.current.addTo(map.current);
+
+      // Máscara: polígono grande con huecos en cada potrero
+      const worldRing = [[-90, -180], [-90, 180], [90, 180], [90, -180]];
+      maskLayerRef.current = L.polygon([worldRing, ...MASK_RINGS], {
+        color: 'none', fillColor: '#0a0a0a', fillOpacity: 0.72, interactive: false
+      }).addTo(map.current);
     }
   }, [ndviActive, ndviDate]);
 
