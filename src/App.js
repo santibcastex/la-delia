@@ -144,11 +144,12 @@ function makeNdviCanvasLayer(url, farmBoundsLL) {
   return layer;
 }
 
-function MapView({ onPotreroClick, modoMover, ndviActive, ndviDate, ndviIndex, showBasemap, onHoverValue }) {
+function MapView({ onPotreroClick, modoMover, ndviActive, ndviDate, ndviIndex, showBasemap, onHoverValue, ndviStats }) {
   const mapContainer = useRef(null);
   const map = useRef(null);
   const layersRef = useRef({});
   const labelsRef = useRef([]);
+  const ndviLabelsRef = useRef([]);
   const ndviLayerRef = useRef(null);
   const baseTileRef = useRef(null);
   const onClickRef = useRef(onPotreroClick);
@@ -179,7 +180,7 @@ function MapView({ onPotreroClick, modoMover, ndviActive, ndviDate, ndviIndex, s
     map.current.getContainer().style.backgroundColor = showBasemap ? '#000' : '#fff';
   }, [showBasemap]);
 
-  // Modo NDVI: contorno blanco sin fill, labels ocultos
+  // Modo NDVI: contorno blanco sin fill, labels nombre ocultos, labels de stats visibles
   useEffect(() => {
     if (!map.current) return;
     Object.values(layersRef.current).forEach(polys =>
@@ -189,7 +190,45 @@ function MapView({ onPotreroClick, modoMover, ndviActive, ndviDate, ndviIndex, s
       const el = m.getElement();
       if (el) el.style.display = ndviActive ? 'none' : '';
     });
-  }, [ndviActive]);
+    // Crear/destruir labels de valor NDVI por potrero
+    ndviLabelsRef.current.forEach(m => map.current.removeLayer(m));
+    ndviLabelsRef.current = [];
+    if (ndviActive && ndviIndex !== 'NATURAL') {
+      POSTREROS_GEOJSON.features.forEach(f => {
+        const nombre = f.properties.nombre;
+        const ring = f.geometry.coordinates[0][0];
+        const lat = ring.reduce((s, p) => s + p[1], 0) / ring.length;
+        const lon = ring.reduce((s, p) => s + p[0], 0) / ring.length;
+        const marker = L.marker([lat, lon], {
+          icon: L.divIcon({
+            html: `<div style="background:rgba(0,0,0,0.65);color:#ffeb3b;font-size:11px;font-weight:700;padding:2px 5px;border-radius:3px;text-align:center;white-space:nowrap;font-family:'Courier New',monospace">—</div>`,
+            className: '',
+            iconSize: [44, 18],
+            iconAnchor: [22, 9]
+          }),
+          interactive: false,
+          zIndexOffset: 600
+        }).addTo(map.current);
+        marker._ndviNombre = nombre;
+        ndviLabelsRef.current.push(marker);
+      });
+    }
+  }, [ndviActive, ndviIndex]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Actualizar labels con valores cuando llegan las stats
+  useEffect(() => {
+    ndviLabelsRef.current.forEach(marker => {
+      const nombre = marker._ndviNombre;
+      const value = ndviStats?.[nombre];
+      const text = value != null ? value.toFixed(2) : '—';
+      marker.setIcon(L.divIcon({
+        html: `<div style="background:rgba(0,0,0,0.65);color:#ffeb3b;font-size:11px;font-weight:700;padding:2px 5px;border-radius:3px;text-align:center;white-space:nowrap;font-family:'Courier New',monospace">${text}</div>`,
+        className: '',
+        iconSize: [44, 18],
+        iconAnchor: [22, 9]
+      }));
+    });
+  }, [ndviStats]);
 
   // Actualizar estilos cuando cambia modoMover
   useEffect(() => {
@@ -295,6 +334,7 @@ function App() {
   const [ndviIndex, setNdviIndex] = useState('NDVIc');
   const [showBasemap, setShowBasemap] = useState(true);
   const [hoverValue, setHoverValue] = useState(null);
+  const [ndviStats, setNdviStats] = useState({});
   const NDVI_DATES = getNdviDates();
 
   useEffect(() => {
@@ -310,6 +350,21 @@ function App() {
     });
     return unsubscribe;
   }, []);
+
+  useEffect(() => {
+    if (!showNDVI || !ndviDate || ndviIndex === 'NATURAL') { setNdviStats({}); return; }
+    const points = POSTREROS_GEOJSON.features.map(f => {
+      const ring = f.geometry.coordinates[0][0];
+      const lat = ring.reduce((s, p) => s + p[1], 0) / ring.length;
+      const lon = ring.reduce((s, p) => s + p[0], 0) / ring.length;
+      return { nombre: f.properties.nombre, lat, lon };
+    });
+    fetch('/api/ndvi-stats', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ points, index: ndviIndex, date: ndviDate })
+    }).then(r => r.json()).then(setNdviStats).catch(() => {});
+  }, [showNDVI, ndviDate, ndviIndex]);
 
   const cargarHaciendaDeFirestore = async () => {
     try {
@@ -489,7 +544,7 @@ function App() {
       <div style={{ display: 'flex', flex: 1, flexDirection: 'column', overflow: 'hidden' }}>
       <div style={{ display: 'flex', flex: showPlanilla ? '0 0 60%' : '1', gap: '1px', overflow: 'hidden' }}>
         <div style={{ flex: 2, position: 'relative' }}>
-          <MapView onPotreroClick={handlePotreroClick} modoMover={modoMover} ndviActive={showNDVI} ndviDate={ndviDate} ndviIndex={ndviIndex} showBasemap={showBasemap} onHoverValue={setHoverValue} />
+          <MapView onPotreroClick={handlePotreroClick} modoMover={modoMover} ndviActive={showNDVI} ndviDate={ndviDate} ndviIndex={ndviIndex} showBasemap={showBasemap} onHoverValue={setHoverValue} ndviStats={ndviStats} />
           {/* Panel control NDVI */}
           {showNDVI && (
             <div style={{ position: 'absolute', bottom: '1.5rem', left: '1rem', zIndex: 1000, backgroundColor: 'rgba(15,15,15,0.92)', borderRadius: '8px', padding: '0.85rem 1rem', color: '#fff', fontSize: '0.82rem', minWidth: '230px', boxShadow: '0 4px 20px rgba(0,0,0,0.5)' }}>
@@ -607,6 +662,14 @@ function App() {
                   <span style={{ display: 'block', fontSize: '1.4rem', fontWeight: 'bold', color: '#ffeb3b' }}>{hacienda.filter(h => h.potrero === selectedPotrero.nombre).length}</span>
                 </div>
               </div>
+              {showNDVI && ndviIndex !== 'NATURAL' && (
+                <div style={{ marginBottom: '0.75rem', padding: '0.5rem 0.75rem', backgroundColor: '#1a1a1a', borderRadius: '4px', border: '1px solid #333' }}>
+                  <span style={{ fontSize: '0.72rem', color: '#aaa', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{ndviIndex} promedio</span>
+                  <span style={{ display: 'block', fontSize: '1.3rem', fontWeight: 'bold', color: '#4caf50', marginTop: '0.15rem' }}>
+                    {ndviStats[selectedPotrero.nombre] != null ? ndviStats[selectedPotrero.nombre].toFixed(3) : '—'}
+                  </span>
+                </div>
+              )}
 
               {/* Botón mover todo */}
               {hacienda.filter(h => h.potrero === selectedPotrero.nombre).length > 0 && (
