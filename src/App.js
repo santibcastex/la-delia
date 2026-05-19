@@ -75,16 +75,15 @@ const STYLE_NDVI    = { color: '#fff',    weight: 1.5, opacity: 0.85, fillColor:
 const STYLE_ORIGEN  = { color: '#ff9800', weight: 3, opacity: 1,   fillColor: '#ff9800', fillOpacity: 0.5 };
 const STYLE_DESTINO = { color: '#4caf50', weight: 2, opacity: 0.9, fillColor: '#4caf50', fillOpacity: 0.45 };
 
-// Máscara NDVI: rectángulo global con huecos en cada potrero → oculta todo lo de afuera
-const MASK_RINGS = (() => {
-  const outer = [[90, -180], [90, 180], [-90, 180], [-90, -180]];
+// Máscara NDVI: huecos en cada potrero (outer ring se elige en runtime según basemap)
+const MASK_HOLES = (() => {
   const holes = [];
   POSTREROS_GEOJSON.features.forEach(f => {
     f.geometry.coordinates.forEach(poly => {
       poly.forEach(ring => holes.push(ring.map(pt => [pt[1], pt[0]])));
     });
   });
-  return [outer, ...holes];
+  return holes;
 })();
 
 function MapView({ onPotreroClick, modoMover, ndviActive, ndviDate, ndviIndex, showBasemap, onHoverValue }) {
@@ -105,32 +104,39 @@ function MapView({ onPotreroClick, modoMover, ndviActive, ndviDate, ndviIndex, s
   // Farm bounds para imageOverlay (calculados del GeoJSON)
   const FARM_BOUNDS = [[-36.9290, -58.6160], [-36.8775, -58.5480]];
 
-  // Imagen del campo + máscara que recorta al perímetro exacto de los potreros
+  // Imagen NDVI: no depende de showBasemap para no recargar la imagen al cambiar basemap
   useEffect(() => {
     if (!map.current) return;
     if (ndviLayerRef.current) { map.current.removeLayer(ndviLayerRef.current); ndviLayerRef.current = null; }
-    if (ndviMaskRef.current) { map.current.removeLayer(ndviMaskRef.current); ndviMaskRef.current = null; }
-
     if (ndviActive && ndviDate) {
       const url = `/api/ndvi-farm?index=${encodeURIComponent(ndviIndex)}&date=${ndviDate}`;
       ndviLayerRef.current = L.imageOverlay(url, FARM_BOUNDS, {
         opacity: 0.9, attribution: 'Sentinel-2 © Copernicus', interactive: false
       }).addTo(map.current);
-      const fillColor = showBasemap ? '#000' : '#fff';
-      ndviMaskRef.current = L.polygon(MASK_RINGS, {
-        fillColor, fillOpacity: 1, stroke: false, interactive: false
-      }).addTo(map.current);
     }
-  }, [ndviActive, ndviDate, ndviIndex, showBasemap]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [ndviActive, ndviDate, ndviIndex]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Máscara NDVI: se recrea al cambiar basemap para ajustar el outer ring
+  useEffect(() => {
+    if (!map.current) return;
+    if (ndviMaskRef.current) { map.current.removeLayer(ndviMaskRef.current); ndviMaskRef.current = null; }
+    if (!ndviActive) return;
+    // Con satélite: outer ring = bbox del campo → satélite visible afuera del bbox
+    // Sin satélite: outer ring = mundo → fondo blanco en todo lo que no es potrero
+    const outerRing = showBasemap
+      ? [[-36.9290, -58.6160], [-36.9290, -58.5480], [-36.8775, -58.5480], [-36.8775, -58.6160]]
+      : [[90, -180], [90, 180], [-90, 180], [-90, -180]];
+    ndviMaskRef.current = L.polygon([outerRing, ...MASK_HOLES], {
+      fillColor: showBasemap ? '#111' : '#fff',
+      fillOpacity: 1, stroke: false, interactive: false
+    }).addTo(map.current);
+  }, [ndviActive, showBasemap]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Mostrar/ocultar mapa base satelital
   useEffect(() => {
     if (!baseTileRef.current || !map.current) return;
     baseTileRef.current.setOpacity(showBasemap ? 1 : 0);
     map.current.getContainer().style.backgroundColor = showBasemap ? '#000' : '#fff';
-    if (ndviMaskRef.current) {
-      ndviMaskRef.current.setStyle({ fillColor: showBasemap ? '#000' : '#fff' });
-    }
   }, [showBasemap]);
 
   // Modo NDVI: contorno blanco sin fill, labels ocultos
