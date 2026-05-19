@@ -23,6 +23,18 @@ const getNdviDates = () => {
   return dates;
 };
 
+const getHistoricalDates = (months = 12) => {
+  const dates = [];
+  const today = new Date();
+  const todayStr = today.toISOString().slice(0, 10);
+  for (let m = 0; m < months; m++) {
+    const d = new Date(today.getFullYear(), today.getMonth() - m, 21);
+    const s = d.toISOString().slice(0, 10);
+    if (s <= todayStr) dates.push(s);
+  }
+  return dates;
+};
+
 const firebaseConfig = {
   apiKey: "AIzaSyAmS8djT1pwnEOjcWTljmh5KDgAOnTi8so",
   authDomain: "la-delia.firebaseapp.com",
@@ -75,7 +87,40 @@ const STYLE_NDVI    = { color: '#fff',    weight: 1.5, opacity: 0.85, fillColor:
 const STYLE_ORIGEN  = { color: '#ff9800', weight: 3, opacity: 1,   fillColor: '#ff9800', fillOpacity: 0.5 };
 const STYLE_DESTINO = { color: '#4caf50', weight: 2, opacity: 0.9, fillColor: '#4caf50', fillOpacity: 0.45 };
 
-// Canvas layer: dibuja la imagen NDVI recortada exactamente al polígono del campo
+// Monteith (1972) model constants — Cristiano et al. 2012, C3 Pampa grasslands
+const EUR = 0.68;
+const PAR_FRAC = 0.45;
+const ALBEDO = 0.22;
+const FPAR_MAX = 0.95;
+// Mott curve: monthly consumption Vacas c/Cría (kg MS/animal/día) ene-dic
+const MOTT_MENSUAL = [9.0, 9.5, 10.5, 11.5, 12.0, 12.5, 13.0, 13.5, 13.0, 12.0, 11.0, 10.0];
+const CONSUMO_DIARIO = { 'Toritos': 6, 'Toros': 12, 'Vacas c/Cría': null, 'Vaquillonas 1-2 Años': 7.5, 'Vaquillonas +2 Años': 9 };
+
+function calcFPAR(ndvi) {
+  const r = (ndvi + 1) / Math.max(0.001, 1 - ndvi);
+  return Math.min(FPAR_MAX, Math.max(0, (r - 1.55) / 10.07));
+}
+
+function calcMS(ndvi, radiationMJm2Month) {
+  const par = radiationMJm2Month * (1 - ALBEDO) * PAR_FRAC;
+  return calcFPAR(ndvi) * par * EUR * 10; // kg/ha/month
+}
+
+function getCatConsumoDiario(catNombre, mesIndex) {
+  if (catNombre === 'Vacas c/Cría') return MOTT_MENSUAL[mesIndex];
+  return CONSUMO_DIARIO[catNombre] ?? 10;
+}
+
+function potreroPoints() {
+  return POSTREROS_GEOJSON.features.map(f => {
+    const ring = f.geometry.coordinates[0][0];
+    const lat = ring.reduce((s, p) => s + p[1], 0) / ring.length;
+    const lon = ring.reduce((s, p) => s + p[0], 0) / ring.length;
+    return { nombre: f.properties.nombre, lat, lon };
+  });
+}
+
+// Canvas layer: clips NDVI image to exact polygon outline
 function makeNdviCanvasLayer(url, farmBoundsLL) {
   const layer = {
     _url: url,
@@ -125,7 +170,6 @@ function makeNdviCanvasLayer(url, farmBoundsLL) {
       const ctx = this._canvas.getContext('2d');
       ctx.clearRect(0, 0, w, h);
 
-      // Recorte al polígono exacto de cada potrero (regla even-odd = múltiples polígonos)
       ctx.beginPath();
       POSTREROS_GEOJSON.features.forEach(f => {
         f.geometry.coordinates.forEach(poly => {
@@ -144,6 +188,319 @@ function makeNdviCanvasLayer(url, farmBoundsLL) {
   return layer;
 }
 
+// ─── Forraje Panel ────────────────────────────────────────────────────────────
+
+function MsBarChart({ data, label = 'MS (kg/ha/mes)' }) {
+  if (!data || data.length === 0) return null;
+  const vals = data.map(d => d.value).filter(v => v != null);
+  if (vals.length === 0) return null;
+  const maxVal = Math.max(...vals, 1);
+  const chartH = 140;
+  const barW = Math.max(18, Math.floor(560 / data.length) - 3);
+
+  return (
+    <div style={{ overflowX: 'auto' }}>
+      <svg viewBox={`0 0 ${data.length * (barW + 3) + 50} ${chartH + 50}`} style={{ width: '100%', height: `${chartH + 50}px` }}>
+        {/* Y gridlines */}
+        {[0, 0.25, 0.5, 0.75, 1].map(pct => {
+          const y = chartH - pct * chartH;
+          return (
+            <g key={pct}>
+              <line x1={40} y1={y} x2={data.length * (barW + 3) + 44} y2={y} stroke="#2a2a2a" strokeWidth="1" />
+              <text x={36} y={y + 4} textAnchor="end" fontSize="9" fill="#555">{Math.round(pct * maxVal)}</text>
+            </g>
+          );
+        })}
+        {/* Bars */}
+        {data.map((d, i) => {
+          const barH = d.value != null ? (d.value / maxVal) * chartH : 0;
+          const x = 42 + i * (barW + 3);
+          const hue = d.value != null ? Math.round((d.value / maxVal) * 120) : 0;
+          return (
+            <g key={d.label}>
+              <rect x={x} y={chartH - barH} width={barW} height={barH} fill={`hsl(${hue},70%,40%)`} rx="2" />
+              <text x={x + barW / 2} y={chartH + 12} textAnchor="middle" fontSize="8" fill="#666" transform={`rotate(-45,${x + barW / 2},${chartH + 12})`}>{d.label}</text>
+            </g>
+          );
+        })}
+        {/* Y axis label */}
+        <text x={10} y={chartH / 2} textAnchor="middle" fontSize="9" fill="#555" transform={`rotate(-90,10,${chartH / 2})`}>{label}</text>
+      </svg>
+    </div>
+  );
+}
+
+function ForrajePanel({ hacienda, historial, ndviStats, ndviDate }) {
+  const [activeTab, setActiveTab] = useState('actual');
+  const [radiation, setRadiation] = useState({});
+  const [ndviHistory, setNdviHistory] = useState(null); // null = not yet loaded
+  const [loadingHistory, setLoadingHistory] = useState(false);
+  const [efficiency, setEfficiency] = useState(50);
+
+  useEffect(() => {
+    fetch('/api/forraje-radiation?months=24')
+      .then(r => r.json())
+      .then(setRadiation)
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if ((activeTab === 'curva' || activeTab === 'descanso') && ndviHistory === null && !loadingHistory) {
+      setLoadingHistory(true);
+      const dates = getHistoricalDates(12);
+      fetch('/api/forraje-ndvi', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ points: potreroPoints(), index: 'NDVIc', dates })
+      })
+        .then(r => r.json())
+        .then(setNdviHistory)
+        .catch(() => setNdviHistory({}))
+        .finally(() => setLoadingHistory(false));
+    }
+  }, [activeTab, ndviHistory, loadingHistory]);
+
+  const currentYM = new Date().toISOString().slice(0, 7);
+  const currentMonth = new Date().getMonth();
+  const currentRad = radiation[currentYM] ?? null;
+
+  // Estado Actual: use ndviStats (latest) + current month radiation
+  const estadoActual = POSTREROS_GEOJSON.features.map(f => {
+    const nombre = f.properties.nombre;
+    const ha = f.properties.ha;
+    const ndvi = ndviStats[nombre] ?? null;
+    const msHa = ndvi != null && currentRad != null ? calcMS(ndvi, currentRad) : null;
+    const msTotal = msHa != null ? msHa * ha : null;
+    const msDisponible = msTotal != null ? msTotal * (efficiency / 100) : null;
+    const catsEnPotrero = hacienda.filter(h => h.potrero === nombre);
+    const consumoDiario = catsEnPotrero.reduce(
+      (sum, cat) => sum + (cat.cantidad || 0) * getCatConsumoDiario(cat.nombre, currentMonth), 0
+    );
+    const diasRestantes = msDisponible != null && consumoDiario > 0
+      ? Math.round(msDisponible / consumoDiario)
+      : null;
+    return { nombre, ha, ndvi, msHa, msDisponible, consumoDiario, diasRestantes, ocupado: catsEnPotrero.length > 0 };
+  }).sort((a, b) => {
+    if (a.diasRestantes != null && b.diasRestantes != null) return a.diasRestantes - b.diasRestantes;
+    if (a.diasRestantes != null) return -1;
+    return 1;
+  });
+
+  // Curva forrajera: monthly farm average MS (kg/ha/month)
+  const curvaData = Object.keys(radiation).sort().slice(-12).map(ym => {
+    const rad = radiation[ym];
+    // Use ndviHistory if available, else use ndviStats for current month
+    let ndviVals = [];
+    if (ndviHistory && ndviHistory[ym]) {
+      ndviVals = Object.values(ndviHistory[ym]).filter(v => v != null);
+    } else if (ym === currentYM) {
+      ndviVals = Object.values(ndviStats).filter(v => v != null);
+    }
+    const avgNdvi = ndviVals.length > 0 ? ndviVals.reduce((s, v) => s + v, 0) / ndviVals.length : null;
+    const ms = avgNdvi != null && rad != null ? calcMS(avgNdvi, rad) : null;
+    return { label: ym.slice(5) + '/' + ym.slice(2, 4), value: ms };
+  });
+
+  // Período de descanso: per resting potrero, accumulated MS since last exit
+  const descansoData = POSTREROS_GEOJSON.features
+    .filter(f => {
+      const nombre = f.properties.nombre;
+      const ocupado = hacienda.some(h => h.potrero === nombre);
+      return !ocupado && historial[nombre]?.fecha_ultima_salida;
+    })
+    .map(f => {
+      const nombre = f.properties.nombre;
+      const ha = f.properties.ha;
+      const fechaSalida = new Date(historial[nombre].fecha_ultima_salida);
+      const diasDescanso = Math.floor((Date.now() - fechaSalida.getTime()) / 86400000);
+
+      // Sum MS for each month since salida
+      let msAcum = 0;
+      let msAcumHa = 0;
+      const sortedYMs = Object.keys(radiation).sort();
+      sortedYMs.forEach(ym => {
+        const [y, m] = ym.split('-').map(Number);
+        const monthStart = new Date(y, m - 1, 1);
+        if (monthStart < fechaSalida) return;
+        const rad = radiation[ym];
+        let ndvi = null;
+        if (ndviHistory && ndviHistory[ym] && ndviHistory[ym][nombre] != null) {
+          ndvi = ndviHistory[ym][nombre];
+        } else if (ym === currentYM && ndviStats[nombre] != null) {
+          ndvi = ndviStats[nombre];
+        }
+        if (ndvi != null && rad != null) {
+          const msHa = calcMS(ndvi, rad);
+          msAcumHa += msHa;
+          msAcum += msHa * ha;
+        }
+      });
+
+      return { nombre, ha, diasDescanso, msAcumHa: Math.round(msAcumHa), msAcum: Math.round(msAcum * efficiency / 100) };
+    })
+    .sort((a, b) => b.diasDescanso - a.diasDescanso);
+
+  const tabs = [
+    { id: 'actual', label: 'Estado Actual' },
+    { id: 'curva', label: 'Curva Forrajera' },
+    { id: 'descanso', label: 'Período Descanso' },
+  ];
+
+  return (
+    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', backgroundColor: '#0d0d0d', overflow: 'hidden' }}>
+      {/* Sub-header */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.75rem 1.5rem', backgroundColor: '#111', borderBottom: '1px solid #222', flexShrink: 0 }}>
+        <span style={{ fontSize: '0.85rem', fontWeight: '700', color: '#4caf50', marginRight: '1rem', letterSpacing: '0.5px', textTransform: 'uppercase' }}>🌿 Materia Seca</span>
+        {tabs.map(t => (
+          <button key={t.id} onClick={() => setActiveTab(t.id)} style={{
+            padding: '0.35rem 0.9rem', fontSize: '0.82rem', fontWeight: '600',
+            backgroundColor: activeTab === t.id ? '#1a3a1a' : 'transparent',
+            color: activeTab === t.id ? '#4caf50' : '#666',
+            border: `1px solid ${activeTab === t.id ? '#4caf50' : '#2a2a2a'}`,
+            borderRadius: '4px', cursor: 'pointer'
+          }}>{t.label}</button>
+        ))}
+        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+          <span style={{ fontSize: '0.75rem', color: '#666' }}>Eficiencia pastoreo</span>
+          <input type="range" min={35} max={65} step={1} value={efficiency}
+            onChange={e => setEfficiency(Number(e.target.value))}
+            style={{ width: '90px', accentColor: '#4caf50' }} />
+          <span style={{ fontSize: '0.8rem', color: '#4caf50', fontWeight: '700', minWidth: '32px' }}>{efficiency}%</span>
+        </div>
+      </div>
+
+      {/* Content */}
+      <div style={{ flex: 1, overflow: 'auto', padding: '1.25rem 1.5rem' }}>
+
+        {/* ── ESTADO ACTUAL ── */}
+        {activeTab === 'actual' && (
+          <div>
+            {currentRad == null && (
+              <div style={{ padding: '0.75rem', backgroundColor: '#1a1a0a', border: '1px solid #3a3a00', borderRadius: '4px', fontSize: '0.8rem', color: '#aaa', marginBottom: '1rem' }}>
+                Cargando radiación solar...
+              </div>
+            )}
+            {Object.keys(ndviStats).length === 0 && (
+              <div style={{ padding: '0.75rem', backgroundColor: '#1a1a0a', border: '1px solid #3a3a00', borderRadius: '4px', fontSize: '0.8rem', color: '#aaa', marginBottom: '1rem' }}>
+                Activá NDVI en el mapa para calcular MS por potrero
+              </div>
+            )}
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem' }}>
+              <thead>
+                <tr style={{ backgroundColor: '#1a1a1a' }}>
+                  {['Potrero', 'Ha', 'NDVIc', 'MS producida (kg/ha)', 'MS disponible (kg)', 'Consumo (kg/día)', 'Días restantes'].map(h => (
+                    <th key={h} style={{ padding: '0.5rem 0.75rem', textAlign: h === 'Potrero' ? 'left' : 'right', color: '#777', fontWeight: '600', textTransform: 'uppercase', fontSize: '0.7rem', letterSpacing: '0.4px', borderBottom: '1px solid #2a2a2a', whiteSpace: 'nowrap' }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {estadoActual.map((row, i) => {
+                  const diasColor = row.diasRestantes == null ? '#444'
+                    : row.diasRestantes < 7 ? '#ff4444'
+                    : row.diasRestantes < 15 ? '#ff9800'
+                    : '#4caf50';
+                  return (
+                    <tr key={row.nombre} style={{ backgroundColor: i % 2 === 0 ? '#111' : '#131313', borderBottom: '1px solid #1e1e1e' }}>
+                      <td style={{ padding: '0.45rem 0.75rem', fontWeight: '700', color: '#ffeb3b' }}>{row.nombre}</td>
+                      <td style={{ padding: '0.45rem 0.75rem', color: '#888', textAlign: 'right' }}>{row.ha.toFixed(1)}</td>
+                      <td style={{ padding: '0.45rem 0.75rem', color: row.ndvi != null ? '#4caf50' : '#444', textAlign: 'right' }}>
+                        {row.ndvi != null ? row.ndvi.toFixed(3) : '—'}
+                      </td>
+                      <td style={{ padding: '0.45rem 0.75rem', color: row.msHa != null ? '#fff' : '#444', textAlign: 'right' }}>
+                        {row.msHa != null ? Math.round(row.msHa).toLocaleString() : '—'}
+                      </td>
+                      <td style={{ padding: '0.45rem 0.75rem', color: row.msDisponible != null ? '#fff' : '#444', textAlign: 'right' }}>
+                        {row.msDisponible != null ? Math.round(row.msDisponible).toLocaleString() : '—'}
+                      </td>
+                      <td style={{ padding: '0.45rem 0.75rem', color: row.consumoDiario > 0 ? '#aaa' : '#333', textAlign: 'right' }}>
+                        {row.consumoDiario > 0 ? Math.round(row.consumoDiario).toLocaleString() : '—'}
+                      </td>
+                      <td style={{ padding: '0.45rem 0.75rem', color: diasColor, textAlign: 'right', fontWeight: row.diasRestantes != null ? '700' : '400' }}>
+                        {row.diasRestantes != null ? `${row.diasRestantes}d` : '—'}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+            <div style={{ marginTop: '0.75rem', fontSize: '0.72rem', color: '#444' }}>
+              Modelo Monteith (1972) · EUR = 0.68 g MS/MJ · fPAR Grigera · Radiación Open-Meteo Sentinel-2 L2A
+            </div>
+          </div>
+        )}
+
+        {/* ── CURVA FORRAJERA ── */}
+        {activeTab === 'curva' && (
+          <div>
+            {loadingHistory && (
+              <div style={{ padding: '2rem', textAlign: 'center', color: '#555', fontSize: '0.85rem' }}>
+                Descargando NDVI histórico (12 meses × 20 potreros)...
+              </div>
+            )}
+            {!loadingHistory && (
+              <>
+                <div style={{ fontSize: '0.8rem', color: '#555', marginBottom: '1rem' }}>
+                  Producción media de MS (kg/ha/mes) · promedio campo · eficiencia {efficiency}%
+                </div>
+                <MsBarChart data={curvaData} label="kg/ha/mes" />
+                {curvaData.every(d => d.value == null) && (
+                  <div style={{ padding: '1.5rem', textAlign: 'center', color: '#444', fontSize: '0.85rem' }}>
+                    Los datos históricos se cargan la primera vez que abrís esta pestaña.<br />
+                    El proceso tarda ~15 segundos.
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        )}
+
+        {/* ── PERÍODO DESCANSO ── */}
+        {activeTab === 'descanso' && (
+          <div>
+            {loadingHistory && (
+              <div style={{ padding: '2rem', textAlign: 'center', color: '#555', fontSize: '0.85rem' }}>
+                Descargando NDVI histórico...
+              </div>
+            )}
+            {!loadingHistory && descansoData.length === 0 && (
+              <div style={{ padding: '1.5rem', textAlign: 'center', color: '#444', fontSize: '0.85rem' }}>
+                No hay potreros en descanso actualmente, o no se registró fecha de última salida.
+              </div>
+            )}
+            {!loadingHistory && descansoData.length > 0 && (
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem' }}>
+                <thead>
+                  <tr style={{ backgroundColor: '#1a1a1a' }}>
+                    {['Potrero', 'Ha', 'Días descanso', 'MS producida (kg/ha)', 'MS disponible (kg)'].map(h => (
+                      <th key={h} style={{ padding: '0.5rem 0.75rem', textAlign: h === 'Potrero' ? 'left' : 'right', color: '#777', fontWeight: '600', textTransform: 'uppercase', fontSize: '0.7rem', letterSpacing: '0.4px', borderBottom: '1px solid #2a2a2a', whiteSpace: 'nowrap' }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {descansoData.map((row, i) => (
+                    <tr key={row.nombre} style={{ backgroundColor: i % 2 === 0 ? '#111' : '#131313', borderBottom: '1px solid #1e1e1e' }}>
+                      <td style={{ padding: '0.45rem 0.75rem', fontWeight: '700', color: '#ffeb3b' }}>{row.nombre}</td>
+                      <td style={{ padding: '0.45rem 0.75rem', color: '#888', textAlign: 'right' }}>{row.ha.toFixed(1)}</td>
+                      <td style={{ padding: '0.45rem 0.75rem', color: '#4caf50', fontWeight: '700', textAlign: 'right' }}>{row.diasDescanso}d</td>
+                      <td style={{ padding: '0.45rem 0.75rem', color: '#fff', textAlign: 'right' }}>{row.msAcumHa.toLocaleString()}</td>
+                      <td style={{ padding: '0.45rem 0.75rem', color: '#4caf50', fontWeight: '700', textAlign: 'right' }}>{row.msAcum.toLocaleString()}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+            <div style={{ marginTop: '0.75rem', fontSize: '0.72rem', color: '#444' }}>
+              MS acumulada desde última salida de hacienda · eficiencia {efficiency}%
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Map View ─────────────────────────────────────────────────────────────────
+
 function MapView({ onPotreroClick, modoMover, ndviActive, ndviDate, ndviIndex, showBasemap, onHoverValue, ndviStats }) {
   const mapContainer = useRef(null);
   const map = useRef(null);
@@ -159,10 +516,8 @@ function MapView({ onPotreroClick, modoMover, ndviActive, ndviDate, ndviIndex, s
   useEffect(() => { onClickRef.current = onPotreroClick; }, [onPotreroClick]);
   useEffect(() => { ndviActiveRef.current = ndviActive; }, [ndviActive]);
 
-  // Farm bounds para imageOverlay (calculados del GeoJSON)
   const FARM_BOUNDS = [[-36.9290, -58.6160], [-36.8775, -58.5480]];
 
-  // Imagen NDVI recortada al polígono exacto del campo (canvas layer)
   useEffect(() => {
     if (!map.current) return;
     if (ndviLayerRef.current) { ndviLayerRef.current.remove(); ndviLayerRef.current = null; }
@@ -173,14 +528,12 @@ function MapView({ onPotreroClick, modoMover, ndviActive, ndviDate, ndviIndex, s
     }
   }, [ndviActive, ndviDate, ndviIndex]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Mostrar/ocultar mapa base satelital
   useEffect(() => {
     if (!baseTileRef.current || !map.current) return;
     baseTileRef.current.setOpacity(showBasemap ? 1 : 0);
     map.current.getContainer().style.backgroundColor = showBasemap ? '#000' : '#fff';
   }, [showBasemap]);
 
-  // Modo NDVI: contorno blanco sin fill, labels nombre ocultos, labels de stats visibles
   useEffect(() => {
     if (!map.current) return;
     Object.values(layersRef.current).forEach(polys =>
@@ -190,7 +543,6 @@ function MapView({ onPotreroClick, modoMover, ndviActive, ndviDate, ndviIndex, s
       const el = m.getElement();
       if (el) el.style.display = ndviActive ? 'none' : '';
     });
-    // Crear/destruir labels de valor NDVI por potrero
     ndviLabelsRef.current.forEach(m => map.current.removeLayer(m));
     ndviLabelsRef.current = [];
     if (ndviActive && ndviIndex !== 'NATURAL') {
@@ -215,7 +567,6 @@ function MapView({ onPotreroClick, modoMover, ndviActive, ndviDate, ndviIndex, s
     }
   }, [ndviActive, ndviIndex]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Actualizar labels con valores cuando llegan las stats
   useEffect(() => {
     ndviLabelsRef.current.forEach(marker => {
       const nombre = marker._ndviNombre;
@@ -230,7 +581,6 @@ function MapView({ onPotreroClick, modoMover, ndviActive, ndviDate, ndviIndex, s
     });
   }, [ndviStats]);
 
-  // Actualizar estilos cuando cambia modoMover
   useEffect(() => {
     Object.entries(layersRef.current).forEach(([nombre, polys]) => {
       const style = modoMover
@@ -250,7 +600,6 @@ function MapView({ onPotreroClick, modoMover, ndviActive, ndviDate, ndviIndex, s
 
     POSTREROS_GEOJSON.features.forEach(feature => {
       const { geometry, properties: props } = feature;
-
       const polygonRings = geometry.type === 'MultiPolygon'
         ? geometry.coordinates.map(poly => poly.map(ring => convertRing(ring)))
         : [geometry.coordinates.map(ring => convertRing(ring))];
@@ -286,13 +635,11 @@ function MapView({ onPotreroClick, modoMover, ndviActive, ndviDate, ndviIndex, s
       labelsRef.current.push(label);
     });
 
-    // Hover value: mousemove debounced 600ms
     map.current.on('mousemove', (e) => {
       if (!ndviActiveRef.current) return;
       clearTimeout(hoverTimerRef.current);
       hoverTimerRef.current = setTimeout(async () => {
         if (!ndviActiveRef.current) return;
-        // get current index/date from the overlay URL
         const overlay = ndviLayerRef.current;
         if (!overlay) return;
         const src = overlay._url || '';
@@ -318,6 +665,8 @@ function MapView({ onPotreroClick, modoMover, ndviActive, ndviDate, ndviIndex, s
   return <div ref={mapContainer} style={{ width: '100%', height: '100%', cursor: modoMover ? 'crosshair' : 'grab' }} />;
 }
 
+// ─── App ──────────────────────────────────────────────────────────────────────
+
 function App() {
   const [user, setUser] = useState(null);
   const [authReady, setAuthReady] = useState(false);
@@ -327,7 +676,7 @@ function App() {
   const [selectedPotrero, setSelectedPotrero] = useState(null);
   const [draggedCategory, setDraggedCategory] = useState(null);
   const [dropOver, setDropOver] = useState(false);
-  const [showPlanilla, setShowPlanilla] = useState(false);
+  const [activeSection, setActiveSection] = useState('mapa'); // 'mapa' | 'forraje' | 'planilla'
   const [modoMover, setModoMover] = useState(null);
   const [showNDVI, setShowNDVI] = useState(false);
   const [ndviDate, setNdviDate] = useState(getNdviDates()[0] || '');
@@ -339,9 +688,7 @@ function App() {
 
   useEffect(() => {
     getRedirectResult(auth).catch((err) => {
-      if (err.code !== 'auth/no-auth-event') {
-        setAuthError(err.message || err.code);
-      }
+      if (err.code !== 'auth/no-auth-event') setAuthError(err.message || err.code);
     });
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
       setUser(currentUser);
@@ -349,7 +696,7 @@ function App() {
       if (currentUser) cargarHaciendaDeFirestore();
     });
     return unsubscribe;
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!showNDVI || !ndviDate || ndviIndex === 'NATURAL') { setNdviStats({}); return; }
@@ -373,9 +720,7 @@ function App() {
         getDocs(collection(db, 'historial_potreros'))
       ]);
       if (snapHacienda.size === 0) {
-        for (const h of HACIENDA_INICIAL) {
-          await addDoc(collection(db, 'hacienda'), h);
-        }
+        for (const h of HACIENDA_INICIAL) await addDoc(collection(db, 'hacienda'), h);
         setHacienda(HACIENDA_INICIAL);
       } else {
         setHacienda(snapHacienda.docs.map(d => ({ ...d.data(), docId: d.id })));
@@ -397,20 +742,16 @@ function App() {
         ? { potrero: potreroNombre, fecha_ingreso: ahora, fecha_salida: null }
         : { potrero: null, fecha_ingreso: null, fecha_salida: ahora };
       await updateDoc(doc(db, 'hacienda', cat.docId), update);
-
-      // Si desasignamos, registrar fecha_salida en historial del potrero
       if (!potreroNombre && cat.potrero) {
         const histRef = doc(db, 'historial_potreros', cat.potrero);
         await setDoc(histRef, { fecha_ultima_salida: ahora, nombre: cat.potrero }, { merge: true });
         setHistorial(prev => ({ ...prev, [cat.potrero]: { ...prev[cat.potrero], fecha_ultima_salida: ahora } }));
       }
-
       setHacienda(prev => prev.map(h => h.id === categoriaId ? { ...h, ...update } : h));
     } catch (error) {
       console.error('Error:', error);
     }
   };
-
 
   const moverTodoAPotrero = async (origen, destino) => {
     if (origen === destino) { setModoMover(null); return; }
@@ -447,13 +788,9 @@ function App() {
     try {
       await signInWithPopup(auth, provider);
     } catch (popupErr) {
-      // Popup bloqueado por COOP o por el browser — fallback a redirect
       if (popupErr.code === 'auth/popup-blocked' || popupErr.code === 'auth/cancelled-popup-request' || popupErr.code === 'auth/popup-closed-by-user') {
-        try {
-          await signInWithRedirect(auth, provider);
-        } catch (redirectErr) {
-          setAuthError(redirectErr.message || redirectErr.code);
-        }
+        try { await signInWithRedirect(auth, provider); }
+        catch (redirectErr) { setAuthError(redirectErr.message || redirectErr.code); }
       } else {
         setAuthError(popupErr.message || popupErr.code);
       }
@@ -461,12 +798,8 @@ function App() {
   };
 
   const handleSignOut = async () => {
-    try {
-      await signOut(auth);
-      setHacienda(HACIENDA_INICIAL);
-    } catch (error) {
-      console.error('Error:', error);
-    }
+    try { await signOut(auth); setHacienda(HACIENDA_INICIAL); }
+    catch (error) { console.error('Error:', error); }
   };
 
   const totalAnimales = hacienda.reduce((sum, h) => sum + (h.cantidad || 0), 0);
@@ -520,286 +853,273 @@ function App() {
     );
   }
 
+  const sidebarItems = [
+    { id: 'mapa',     icon: '🗺',  label: 'Mapa'     },
+    { id: 'forraje',  icon: '🌿',  label: 'Forraje'  },
+    { id: 'planilla', icon: '📋',  label: 'Planilla' },
+  ];
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', backgroundColor: '#0a0a0a', color: '#fff', fontFamily: 'sans-serif', overflow: 'hidden' }}>
-      <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '1.5rem 2rem', backgroundColor: '#1a1a1a', borderBottom: '1px solid #333' }}>
+      {/* Header */}
+      <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.9rem 1.5rem', backgroundColor: '#111', borderBottom: '1px solid #222', flexShrink: 0 }}>
         <div>
-          <h1 style={{ fontSize: '2.5rem', fontWeight: '300', margin: '0 0 0.25rem 0', letterSpacing: '1px' }}>Ea La Delia</h1>
-          <p style={{ fontSize: '0.95rem', color: '#aaa', margin: 0 }}>Solanet, Ayacucho • 1,381 ha</p>
+          <h1 style={{ fontSize: '1.8rem', fontWeight: '300', margin: 0, letterSpacing: '1px' }}>Ea La Delia</h1>
+          <p style={{ fontSize: '0.8rem', color: '#555', margin: 0 }}>Solanet, Ayacucho · 1,381 ha</p>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-          <span style={{ fontSize: '0.9rem', color: '#aaa' }}>{user.displayName || user.email}</span>
-          <button onClick={() => setShowNDVI(v => !v)} style={{ padding: '0.5rem 1rem', backgroundColor: showNDVI ? '#4caf50' : '#2a2a2a', color: showNDVI ? '#000' : '#fff', border: '1px solid #444', borderRadius: '3px', cursor: 'pointer', fontSize: '0.85rem', fontWeight: '600' }}>
-            🌿 {showNDVI ? 'NDVI ON' : 'NDVI'}
-          </button>
-          <button onClick={() => setShowPlanilla(v => !v)} style={{ padding: '0.5rem 1rem', backgroundColor: showPlanilla ? '#ffeb3b' : '#2a2a2a', color: showPlanilla ? '#000' : '#fff', border: '1px solid #444', borderRadius: '3px', cursor: 'pointer', fontSize: '0.85rem', fontWeight: '600' }}>
-            {showPlanilla ? '▲ Ocultar planilla' : '▼ Ver planilla'}
-          </button>
-          <button onClick={handleSignOut} style={{ padding: '0.5rem 1rem', backgroundColor: '#c41e3a', color: '#fff', border: 'none', borderRadius: '3px', cursor: 'pointer', fontSize: '0.85rem', fontWeight: '600' }}>
-            Cerrar sesión
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+          <span style={{ fontSize: '0.85rem', color: '#666' }}>{user.displayName || user.email}</span>
+          {activeSection === 'mapa' && (
+            <button onClick={() => setShowNDVI(v => !v)} style={{ padding: '0.4rem 0.85rem', backgroundColor: showNDVI ? '#4caf50' : '#1e1e1e', color: showNDVI ? '#000' : '#aaa', border: `1px solid ${showNDVI ? '#4caf50' : '#333'}`, borderRadius: '3px', cursor: 'pointer', fontSize: '0.8rem', fontWeight: '600' }}>
+              🌿 {showNDVI ? 'NDVI ON' : 'NDVI'}
+            </button>
+          )}
+          <button onClick={handleSignOut} style={{ padding: '0.4rem 0.85rem', backgroundColor: '#c41e3a', color: '#fff', border: 'none', borderRadius: '3px', cursor: 'pointer', fontSize: '0.8rem', fontWeight: '600' }}>
+            Salir
           </button>
         </div>
       </header>
 
-      <div style={{ display: 'flex', flex: 1, flexDirection: 'column', overflow: 'hidden' }}>
-      <div style={{ display: 'flex', flex: showPlanilla ? '0 0 60%' : '1', gap: '1px', overflow: 'hidden' }}>
-        <div style={{ flex: 2, position: 'relative' }}>
-          <MapView onPotreroClick={handlePotreroClick} modoMover={modoMover} ndviActive={showNDVI} ndviDate={ndviDate} ndviIndex={ndviIndex} showBasemap={showBasemap} onHoverValue={setHoverValue} ndviStats={ndviStats} />
-          {/* Panel control NDVI */}
-          {showNDVI && (
-            <div style={{ position: 'absolute', bottom: '1.5rem', left: '1rem', zIndex: 1000, backgroundColor: 'rgba(15,15,15,0.92)', borderRadius: '8px', padding: '0.85rem 1rem', color: '#fff', fontSize: '0.82rem', minWidth: '230px', boxShadow: '0 4px 20px rgba(0,0,0,0.5)' }}>
-              {/* Navegación de fecha */}
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.7rem' }}>
-                <button onClick={() => { const i = NDVI_DATES.indexOf(ndviDate); if (i < NDVI_DATES.length-1) setNdviDate(NDVI_DATES[i+1]); }}
-                  style={{ background: 'none', border: 'none', color: '#aaa', fontSize: '1.1rem', cursor: 'pointer', padding: '0 0.3rem' }}>‹</button>
-                <span style={{ fontWeight: '600', fontSize: '0.83rem' }}>{ndviDate}</span>
-                <button onClick={() => { const i = NDVI_DATES.indexOf(ndviDate); if (i > 0) setNdviDate(NDVI_DATES[i-1]); }}
-                  style={{ background: 'none', border: 'none', color: '#aaa', fontSize: '1.1rem', cursor: 'pointer', padding: '0 0.3rem' }}>›</button>
-              </div>
-              {/* Selector de índice — fila 1 */}
-              <div style={{ display: 'flex', gap: '0.25rem', marginBottom: '0.25rem' }}>
-                {[
-                  { id: 'NDVIc', label: 'NDVI+', tip: 'NDVI contrastado' },
-                  { id: 'NDVI',  label: 'NDVI',  tip: 'NDVI estándar' },
-                  { id: 'EVI',   label: 'EVI',   tip: 'Vegetación densa' },
-                  { id: 'NDRE',  label: 'NDRE',  tip: 'Clorofila / estrés' },
-                ].map(({ id, label, tip }) => (
-                  <button key={id} onClick={() => setNdviIndex(id)} title={tip} style={{
-                    flex: 1, padding: '0.22rem 0', fontSize: '0.7rem', fontWeight: '700',
-                    border: '1px solid', borderRadius: '3px', cursor: 'pointer',
-                    backgroundColor: ndviIndex === id ? '#4caf50' : '#222',
-                    color: ndviIndex === id ? '#000' : '#999',
-                    borderColor: ndviIndex === id ? '#4caf50' : '#3a3a3a',
-                  }}>{label}</button>
-                ))}
-              </div>
-              {/* Selector de índice — fila 2 */}
-              <div style={{ display: 'flex', gap: '0.25rem', marginBottom: '0.25rem' }}>
-                {[
-                  { id: 'MSAVI',   label: 'MSAVI',   tip: 'Vegetación escasa / suelo' },
-                  { id: 'RECI',    label: 'RECI',    tip: 'Clorofila red-edge' },
-                  { id: 'NDMI',    label: 'NDMI',    tip: 'Humedad vegetación' },
-                  { id: 'NDWI',    label: 'NDWI',    tip: 'Agua libre' },
-                ].map(({ id, label, tip }) => (
-                  <button key={id} onClick={() => setNdviIndex(id)} title={tip} style={{
-                    flex: 1, padding: '0.22rem 0', fontSize: '0.7rem', fontWeight: '700',
-                    border: '1px solid', borderRadius: '3px', cursor: 'pointer',
-                    backgroundColor: ndviIndex === id ? '#4caf50' : '#222',
-                    color: ndviIndex === id ? '#000' : '#999',
-                    borderColor: ndviIndex === id ? '#4caf50' : '#3a3a3a',
-                  }}>{label}</button>
-                ))}
-              </div>
-              {/* Fila 3: imagen natural */}
-              <div style={{ display: 'flex', gap: '0.25rem', marginBottom: '0.7rem' }}>
-                {[{ id: 'NATURAL', label: '🛰 Imagen natural (color real)', tip: 'True color Sentinel-2' }].map(({ id, label, tip }) => (
-                  <button key={id} onClick={() => setNdviIndex(id)} title={tip} style={{
-                    flex: 1, padding: '0.22rem 0.4rem', fontSize: '0.7rem', fontWeight: '700',
-                    border: '1px solid', borderRadius: '3px', cursor: 'pointer',
-                    backgroundColor: ndviIndex === id ? '#4caf50' : '#222',
-                    color: ndviIndex === id ? '#000' : '#999',
-                    borderColor: ndviIndex === id ? '#4caf50' : '#3a3a3a',
-                  }}>{label}</button>
-                ))}
-              </div>
-              {/* Valor hover */}
-              {hoverValue && ndviIndex !== 'NATURAL' && (
-                <div style={{ marginBottom: '0.6rem', padding: '0.4rem 0.6rem', backgroundColor: '#1a1a1a', borderRadius: '4px', border: '1px solid #333' }}>
-                  <span style={{ color: '#4caf50', fontWeight: '700', fontSize: '0.85rem' }}>{ndviIndex}: {typeof hoverValue.value === 'number' ? hoverValue.value.toFixed(3) : '—'}</span>
-                  <span style={{ color: '#888', fontSize: '0.72rem', marginLeft: '0.5rem' }}>{hoverValue.label || ''}</span>
-                </div>
-              )}
-              {/* Toggle mapa base */}
-              <button onClick={() => setShowBasemap(v => !v)} style={{
-                width: '100%', padding: '0.25rem', fontSize: '0.72rem', marginBottom: '0.6rem',
-                backgroundColor: showBasemap ? '#222' : '#1a3a1a', color: showBasemap ? '#888' : '#4caf50',
-                border: '1px solid', borderColor: showBasemap ? '#3a3a3a' : '#4caf50',
-                borderRadius: '3px', cursor: 'pointer'
-              }}>
-                {showBasemap ? '🛰 Ocultar satélite' : '🛰 Mostrar satélite'}
-              </button>
-              {/* Leyenda arcoíris */}
-              <div style={{ display: 'flex', height: '7px', borderRadius: '3px', overflow: 'hidden', marginBottom: '0.25rem' }}>
-                {['#82005a','#d2001e','#f03c00','#ff8c00','#f0d700','#afe600','#50c800','#009b14','#006432'].map((c,i) => (
-                  <div key={i} style={{ flex: 1, backgroundColor: c }} />
-                ))}
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.65rem', color: '#666' }}>
-                <span>bajo</span><span>medio</span><span>alto</span>
-              </div>
-            </div>
-          )}
+      {/* Body: sidebar + content */}
+      <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
 
-          {modoMover && (
-            <div style={{ position: 'absolute', top: '1rem', left: '50%', transform: 'translateX(-50%)', backgroundColor: '#4caf50', color: '#000', padding: '0.6rem 1.5rem', borderRadius: '4px', fontWeight: '700', fontSize: '0.9rem', zIndex: 1000, boxShadow: '0 2px 12px rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', gap: '1rem' }}>
-              Seleccioná el potrero destino en el mapa
-              <button onClick={() => setModoMover(null)} style={{ background: 'rgba(0,0,0,0.2)', border: 'none', color: '#000', cursor: 'pointer', borderRadius: '3px', padding: '0.2rem 0.5rem', fontWeight: '700' }}>✕ Cancelar</button>
-            </div>
-          )}
-        </div>
-
-        <div style={{ flex: 1, backgroundColor: '#1a1a1a', borderLeft: '1px solid #333', overflow: 'auto', padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-
-          {/* Panel potrero seleccionado — drop target */}
-          {selectedPotrero ? (
-            <div
-              onDragOver={(e) => { e.preventDefault(); setDropOver(true); }}
-              onDragLeave={() => setDropOver(false)}
-              onDrop={() => {
-                if (draggedCategory) moverAPotrero(draggedCategory, selectedPotrero.nombre);
-                setDropOver(false);
+        {/* Left sidebar */}
+        <nav style={{ width: '56px', backgroundColor: '#111', borderRight: '1px solid #1e1e1e', display: 'flex', flexDirection: 'column', alignItems: 'center', paddingTop: '0.75rem', gap: '0.25rem', flexShrink: 0 }}>
+          {sidebarItems.map(({ id, icon, label }) => (
+            <button
+              key={id}
+              onClick={() => setActiveSection(id)}
+              title={label}
+              style={{
+                width: '40px', height: '44px',
+                display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '2px',
+                backgroundColor: activeSection === id ? '#1a3a1a' : 'transparent',
+                border: 'none', borderRadius: '6px', cursor: 'pointer',
+                color: activeSection === id ? '#4caf50' : '#555',
+                transition: 'all 0.15s',
               }}
-              style={{ backgroundColor: dropOver ? '#1a3a1a' : '#2a2a2a', padding: '1rem', borderRadius: '4px', border: `2px solid ${dropOver ? '#4caf50' : '#c41e3a'}`, position: 'relative', transition: 'all 0.15s' }}
             >
-              <h2 style={{ fontSize: '1.3rem', margin: '0 0 0.5rem 0', fontWeight: '600' }}>Potrero {selectedPotrero.nombre}</h2>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '0.75rem' }}>
-                <div>
-                  <span style={{ display: 'block', fontSize: '0.75rem', color: '#aaa', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '0.2rem' }}>Hectáreas</span>
-                  <span style={{ display: 'block', fontSize: '1.4rem', fontWeight: 'bold', color: '#ffeb3b' }}>{selectedPotrero.ha.toFixed(1)}</span>
+              <span style={{ fontSize: '1.15rem', lineHeight: 1 }}>{icon}</span>
+              <span style={{ fontSize: '0.55rem', fontWeight: '600', letterSpacing: '0.3px', textTransform: 'uppercase' }}>{label}</span>
+            </button>
+          ))}
+        </nav>
+
+        {/* Main content area */}
+        <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
+
+          {/* ── MAPA section ── */}
+          {activeSection === 'mapa' && (
+            <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
+              {/* Map */}
+              <div style={{ flex: 2, position: 'relative' }}>
+                <MapView onPotreroClick={handlePotreroClick} modoMover={modoMover} ndviActive={showNDVI} ndviDate={ndviDate} ndviIndex={ndviIndex} showBasemap={showBasemap} onHoverValue={setHoverValue} ndviStats={ndviStats} />
+
+                {/* NDVI control panel */}
+                {showNDVI && (
+                  <div style={{ position: 'absolute', bottom: '1.5rem', left: '1rem', zIndex: 1000, backgroundColor: 'rgba(15,15,15,0.92)', borderRadius: '8px', padding: '0.85rem 1rem', color: '#fff', fontSize: '0.82rem', minWidth: '230px', boxShadow: '0 4px 20px rgba(0,0,0,0.5)' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.7rem' }}>
+                      <button onClick={() => { const i = NDVI_DATES.indexOf(ndviDate); if (i < NDVI_DATES.length-1) setNdviDate(NDVI_DATES[i+1]); }}
+                        style={{ background: 'none', border: 'none', color: '#aaa', fontSize: '1.1rem', cursor: 'pointer', padding: '0 0.3rem' }}>‹</button>
+                      <span style={{ fontWeight: '600', fontSize: '0.83rem' }}>{ndviDate}</span>
+                      <button onClick={() => { const i = NDVI_DATES.indexOf(ndviDate); if (i > 0) setNdviDate(NDVI_DATES[i-1]); }}
+                        style={{ background: 'none', border: 'none', color: '#aaa', fontSize: '1.1rem', cursor: 'pointer', padding: '0 0.3rem' }}>›</button>
+                    </div>
+                    <div style={{ display: 'flex', gap: '0.25rem', marginBottom: '0.25rem' }}>
+                      {[{id:'NDVIc',label:'NDVI+'},{id:'NDVI',label:'NDVI'},{id:'EVI',label:'EVI'},{id:'NDRE',label:'NDRE'}].map(({id,label}) => (
+                        <button key={id} onClick={() => setNdviIndex(id)} style={{ flex:1, padding:'0.22rem 0', fontSize:'0.7rem', fontWeight:'700', border:'1px solid', borderRadius:'3px', cursor:'pointer', backgroundColor: ndviIndex===id?'#4caf50':'#222', color: ndviIndex===id?'#000':'#999', borderColor: ndviIndex===id?'#4caf50':'#3a3a3a' }}>{label}</button>
+                      ))}
+                    </div>
+                    <div style={{ display: 'flex', gap: '0.25rem', marginBottom: '0.25rem' }}>
+                      {[{id:'MSAVI',label:'MSAVI'},{id:'RECI',label:'RECI'},{id:'NDMI',label:'NDMI'},{id:'NDWI',label:'NDWI'}].map(({id,label}) => (
+                        <button key={id} onClick={() => setNdviIndex(id)} style={{ flex:1, padding:'0.22rem 0', fontSize:'0.7rem', fontWeight:'700', border:'1px solid', borderRadius:'3px', cursor:'pointer', backgroundColor: ndviIndex===id?'#4caf50':'#222', color: ndviIndex===id?'#000':'#999', borderColor: ndviIndex===id?'#4caf50':'#3a3a3a' }}>{label}</button>
+                      ))}
+                    </div>
+                    <div style={{ display: 'flex', gap: '0.25rem', marginBottom: '0.7rem' }}>
+                      <button onClick={() => setNdviIndex('NATURAL')} style={{ flex:1, padding:'0.22rem 0.4rem', fontSize:'0.7rem', fontWeight:'700', border:'1px solid', borderRadius:'3px', cursor:'pointer', backgroundColor: ndviIndex==='NATURAL'?'#4caf50':'#222', color: ndviIndex==='NATURAL'?'#000':'#999', borderColor: ndviIndex==='NATURAL'?'#4caf50':'#3a3a3a' }}>🛰 Imagen natural (color real)</button>
+                    </div>
+                    {hoverValue && ndviIndex !== 'NATURAL' && (
+                      <div style={{ marginBottom: '0.6rem', padding: '0.4rem 0.6rem', backgroundColor: '#1a1a1a', borderRadius: '4px', border: '1px solid #333' }}>
+                        <span style={{ color: '#4caf50', fontWeight: '700', fontSize: '0.85rem' }}>{ndviIndex}: {typeof hoverValue.value === 'number' ? hoverValue.value.toFixed(3) : '—'}</span>
+                        <span style={{ color: '#888', fontSize: '0.72rem', marginLeft: '0.5rem' }}>{hoverValue.label || ''}</span>
+                      </div>
+                    )}
+                    <button onClick={() => setShowBasemap(v => !v)} style={{ width:'100%', padding:'0.25rem', fontSize:'0.72rem', marginBottom:'0.6rem', backgroundColor: showBasemap?'#222':'#1a3a1a', color: showBasemap?'#888':'#4caf50', border:'1px solid', borderColor: showBasemap?'#3a3a3a':'#4caf50', borderRadius:'3px', cursor:'pointer' }}>
+                      {showBasemap ? '🛰 Ocultar satélite' : '🛰 Mostrar satélite'}
+                    </button>
+                    <div style={{ display:'flex', height:'7px', borderRadius:'3px', overflow:'hidden', marginBottom:'0.25rem' }}>
+                      {['#82005a','#d2001e','#f03c00','#ff8c00','#f0d700','#afe600','#50c800','#009b14','#006432'].map((c,i) => (
+                        <div key={i} style={{ flex:1, backgroundColor:c }} />
+                      ))}
+                    </div>
+                    <div style={{ display:'flex', justifyContent:'space-between', fontSize:'0.65rem', color:'#666' }}>
+                      <span>bajo</span><span>medio</span><span>alto</span>
+                    </div>
+                  </div>
+                )}
+
+                {modoMover && (
+                  <div style={{ position:'absolute', top:'1rem', left:'50%', transform:'translateX(-50%)', backgroundColor:'#4caf50', color:'#000', padding:'0.6rem 1.5rem', borderRadius:'4px', fontWeight:'700', fontSize:'0.9rem', zIndex:1000, boxShadow:'0 2px 12px rgba(0,0,0,0.5)', display:'flex', alignItems:'center', gap:'1rem' }}>
+                    Seleccioná el potrero destino en el mapa
+                    <button onClick={() => setModoMover(null)} style={{ background:'rgba(0,0,0,0.2)', border:'none', color:'#000', cursor:'pointer', borderRadius:'3px', padding:'0.2rem 0.5rem', fontWeight:'700' }}>✕ Cancelar</button>
+                  </div>
+                )}
+              </div>
+
+              {/* Right panel */}
+              <div style={{ flex: 1, backgroundColor: '#1a1a1a', borderLeft: '1px solid #222', overflow: 'auto', padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+                {/* Selected potrero */}
+                {selectedPotrero ? (
+                  <div
+                    onDragOver={(e) => { e.preventDefault(); setDropOver(true); }}
+                    onDragLeave={() => setDropOver(false)}
+                    onDrop={() => { if (draggedCategory) moverAPotrero(draggedCategory, selectedPotrero.nombre); setDropOver(false); }}
+                    style={{ backgroundColor: dropOver ? '#1a3a1a' : '#2a2a2a', padding: '1rem', borderRadius: '4px', border: `2px solid ${dropOver ? '#4caf50' : '#c41e3a'}`, position: 'relative', transition: 'all 0.15s' }}
+                  >
+                    <h2 style={{ fontSize: '1.2rem', margin: '0 0 0.5rem 0', fontWeight: '600' }}>Potrero {selectedPotrero.nombre}</h2>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.6rem', marginBottom: '0.6rem' }}>
+                      <div>
+                        <span style={{ display: 'block', fontSize: '0.72rem', color: '#aaa', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '0.15rem' }}>Hectáreas</span>
+                        <span style={{ display: 'block', fontSize: '1.3rem', fontWeight: 'bold', color: '#ffeb3b' }}>{selectedPotrero.ha.toFixed(1)}</span>
+                      </div>
+                      <div>
+                        <span style={{ display: 'block', fontSize: '0.72rem', color: '#aaa', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '0.15rem' }}>Categorías</span>
+                        <span style={{ display: 'block', fontSize: '1.3rem', fontWeight: 'bold', color: '#ffeb3b' }}>{hacienda.filter(h => h.potrero === selectedPotrero.nombre).length}</span>
+                      </div>
+                    </div>
+                    {showNDVI && ndviIndex !== 'NATURAL' && (
+                      <div style={{ marginBottom: '0.6rem', padding: '0.4rem 0.6rem', backgroundColor: '#1a1a1a', borderRadius: '4px', border: '1px solid #333' }}>
+                        <span style={{ fontSize: '0.7rem', color: '#aaa', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{ndviIndex} promedio</span>
+                        <span style={{ display: 'block', fontSize: '1.2rem', fontWeight: 'bold', color: '#4caf50', marginTop: '0.1rem' }}>
+                          {ndviStats[selectedPotrero.nombre] != null ? ndviStats[selectedPotrero.nombre].toFixed(3) : '—'}
+                        </span>
+                      </div>
+                    )}
+                    {hacienda.filter(h => h.potrero === selectedPotrero.nombre).length > 0 && (
+                      <button onClick={() => setModoMover(selectedPotrero.nombre)} style={{ width: '100%', padding: '0.45rem', marginBottom: '0.6rem', backgroundColor: '#ff9800', color: '#000', border: 'none', borderRadius: '3px', cursor: 'pointer', fontWeight: '700', fontSize: '0.82rem' }}>
+                        Mover todo a otro potrero →
+                      </button>
+                    )}
+                    {hacienda.filter(h => h.potrero === selectedPotrero.nombre).length > 0 && (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem', marginTop: '0.4rem' }}>
+                        {hacienda.filter(h => h.potrero === selectedPotrero.nombre).map(cat => (
+                          <div key={cat.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.35rem 0.5rem', backgroundColor: '#1a1a1a', borderRadius: '3px', fontSize: '0.83rem' }}>
+                            <span>{cat.nombre} — <strong>{cat.cantidad}</strong> cab.</span>
+                            <button onClick={() => moverAPotrero(cat.id, null)} title="Desasignar" style={{ background: 'none', border: 'none', color: '#aaa', cursor: 'pointer', fontSize: '1rem', padding: '0 0.25rem' }}>✕</button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {dropOver && <div style={{ marginTop: '0.6rem', textAlign: 'center', fontSize: '0.83rem', color: '#4caf50' }}>Soltá para asignar al Potrero {selectedPotrero.nombre}</div>}
+                    {!dropOver && hacienda.filter(h => h.potrero === selectedPotrero.nombre).length === 0 && (
+                      <div style={{ marginTop: '0.4rem', textAlign: 'center', fontSize: '0.78rem', color: '#444', borderTop: '1px dashed #2a2a2a', paddingTop: '0.4rem' }}>Arrastrá hacienda acá para asignar</div>
+                    )}
+                    <button onClick={() => setSelectedPotrero(null)} style={{ position: 'absolute', top: '0.6rem', right: '0.6rem', background: 'none', border: 'none', color: '#aaa', fontSize: '1.1rem', cursor: 'pointer', padding: '0.2rem 0.4rem' }}>✕</button>
+                  </div>
+                ) : (
+                  <div style={{ padding: '0.85rem', backgroundColor: '#2a2a2a', borderRadius: '4px', border: '1px dashed #333', textAlign: 'center', fontSize: '0.82rem', color: '#444' }}>
+                    Hacé clic en un potrero del mapa para seleccionarlo
+                  </div>
+                )}
+
+                {/* Hacienda list */}
+                <div style={{ flex: 1 }}>
+                  <h3 style={{ fontSize: '0.9rem', fontWeight: '600', margin: '0 0 0.6rem 0', textTransform: 'uppercase', letterSpacing: '0.5px', borderBottom: '1px solid #2a2a2a', paddingBottom: '0.5rem', color: '#aaa' }}>
+                    Hacienda {draggedCategory ? '— arrastrando...' : ''}
+                  </h3>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                    {hacienda.filter(h => h.cantidad > 0).map((cat) => (
+                      <div
+                        key={cat.id}
+                        draggable
+                        onDragStart={() => setDraggedCategory(cat.id)}
+                        onDragEnd={() => { setDraggedCategory(null); setDropOver(false); }}
+                        style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.55rem 0.65rem', backgroundColor: draggedCategory === cat.id ? '#3a3a3a' : '#2a2a2a', borderRadius: '3px', borderLeft: `3px solid ${cat.potrero ? '#4caf50' : '#c41e3a'}`, fontSize: '0.88rem', cursor: 'grab', opacity: draggedCategory === cat.id ? 0.6 : 1 }}
+                      >
+                        <div>
+                          <span style={{ display: 'block', fontWeight: '600', marginBottom: '0.1rem' }}>{cat.nombre}</span>
+                          <span style={{ display: 'block', fontSize: '0.75rem', color: cat.potrero ? '#4caf50' : '#666' }}>
+                            {cat.potrero ? `Potrero ${cat.potrero}` : 'Sin asignar'}
+                          </span>
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
+                          <span style={{ fontSize: '1.1rem', fontWeight: 'bold', color: '#fff' }}>{cat.cantidad}</span>
+                          <span style={{ fontSize: '0.75rem', color: '#666' }}>{cat.peso_promedio} kg</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 </div>
-                <div>
-                  <span style={{ display: 'block', fontSize: '0.75rem', color: '#aaa', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '0.2rem' }}>Categorías</span>
-                  <span style={{ display: 'block', fontSize: '1.4rem', fontWeight: 'bold', color: '#ffeb3b' }}>{hacienda.filter(h => h.potrero === selectedPotrero.nombre).length}</span>
+
+                {/* Metrics */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.6rem' }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', padding: '0.75rem', backgroundColor: '#2a2a2a', borderRadius: '3px', border: '1px solid #222' }}>
+                    <span style={{ fontSize: '0.7rem', color: '#aaa', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '0.35rem' }}>Total animales</span>
+                    <span style={{ fontSize: '1.6rem', fontWeight: 'bold', color: '#ffeb3b' }}>{totalAnimales}</span>
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', padding: '0.75rem', backgroundColor: '#2a2a2a', borderRadius: '3px', border: '1px solid #222' }}>
+                    <span style={{ fontSize: '0.7rem', color: '#aaa', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '0.35rem' }}>Asignados</span>
+                    <span style={{ fontSize: '1.6rem', fontWeight: 'bold', color: '#ffeb3b' }}>{hacienda.filter(h => h.potrero).length}/{hacienda.length}</span>
+                  </div>
                 </div>
               </div>
-              {showNDVI && ndviIndex !== 'NATURAL' && (
-                <div style={{ marginBottom: '0.75rem', padding: '0.5rem 0.75rem', backgroundColor: '#1a1a1a', borderRadius: '4px', border: '1px solid #333' }}>
-                  <span style={{ fontSize: '0.72rem', color: '#aaa', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{ndviIndex} promedio</span>
-                  <span style={{ display: 'block', fontSize: '1.3rem', fontWeight: 'bold', color: '#4caf50', marginTop: '0.15rem' }}>
-                    {ndviStats[selectedPotrero.nombre] != null ? ndviStats[selectedPotrero.nombre].toFixed(3) : '—'}
-                  </span>
-                </div>
-              )}
-
-              {/* Botón mover todo */}
-              {hacienda.filter(h => h.potrero === selectedPotrero.nombre).length > 0 && (
-                <button
-                  onClick={() => setModoMover(selectedPotrero.nombre)}
-                  style={{ width: '100%', padding: '0.5rem', marginBottom: '0.75rem', backgroundColor: '#ff9800', color: '#000', border: 'none', borderRadius: '3px', cursor: 'pointer', fontWeight: '700', fontSize: '0.85rem' }}
-                >
-                  Mover todo a otro potrero →
-                </button>
-              )}
-
-              {/* Categorías asignadas a este potrero */}
-              {hacienda.filter(h => h.potrero === selectedPotrero.nombre).length > 0 && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', marginTop: '0.5rem' }}>
-                  {hacienda.filter(h => h.potrero === selectedPotrero.nombre).map(cat => (
-                    <div key={cat.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.4rem 0.6rem', backgroundColor: '#1a1a1a', borderRadius: '3px', fontSize: '0.85rem' }}>
-                      <span>{cat.nombre} — <strong>{cat.cantidad}</strong> cab.</span>
-                      <button
-                        onClick={() => moverAPotrero(cat.id, null)}
-                        title="Desasignar"
-                        style={{ background: 'none', border: 'none', color: '#aaa', cursor: 'pointer', fontSize: '1rem', padding: '0 0.25rem' }}
-                      >✕</button>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {dropOver && (
-                <div style={{ marginTop: '0.75rem', textAlign: 'center', fontSize: '0.85rem', color: '#4caf50' }}>
-                  Soltá para asignar al Potrero {selectedPotrero.nombre}
-                </div>
-              )}
-              {!dropOver && hacienda.filter(h => h.potrero === selectedPotrero.nombre).length === 0 && (
-                <div style={{ marginTop: '0.5rem', textAlign: 'center', fontSize: '0.8rem', color: '#555', borderTop: '1px dashed #333', paddingTop: '0.5rem' }}>
-                  Arrastrá hacienda acá para asignar
-                </div>
-              )}
-
-              <button onClick={() => setSelectedPotrero(null)} style={{ position: 'absolute', top: '0.75rem', right: '0.75rem', background: 'none', border: 'none', color: '#aaa', fontSize: '1.2rem', cursor: 'pointer', padding: '0.25rem 0.5rem' }}>✕</button>
-            </div>
-          ) : (
-            <div style={{ padding: '1rem', backgroundColor: '#2a2a2a', borderRadius: '4px', border: '1px dashed #444', textAlign: 'center', fontSize: '0.85rem', color: '#555' }}>
-              Hacé clic en un potrero del mapa para seleccionarlo
             </div>
           )}
 
-          {/* Lista de hacienda */}
-          <div style={{ flex: 1 }}>
-            <h3 style={{ fontSize: '1rem', fontWeight: '600', margin: '0 0 0.75rem 0', textTransform: 'uppercase', letterSpacing: '0.5px', borderBottom: '1px solid #333', paddingBottom: '0.6rem' }}>
-              Hacienda {draggedCategory ? '— arrastrando...' : '— arrastrá al potrero'}
-            </h3>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
-              {hacienda.filter(h => h.cantidad > 0).map((cat) => (
-                <div
-                  key={cat.id}
-                  draggable
-                  onDragStart={() => setDraggedCategory(cat.id)}
-                  onDragEnd={() => { setDraggedCategory(null); setDropOver(false); }}
-                  style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.65rem 0.75rem', backgroundColor: draggedCategory === cat.id ? '#3a3a3a' : '#2a2a2a', borderRadius: '3px', borderLeft: `3px solid ${cat.potrero ? '#4caf50' : '#c41e3a'}`, fontSize: '0.9rem', cursor: 'grab', opacity: draggedCategory === cat.id ? 0.6 : 1 }}
-                >
-                  <div>
-                    <span style={{ display: 'block', fontWeight: '600', marginBottom: '0.15rem' }}>{cat.nombre}</span>
-                    <span style={{ display: 'block', fontSize: '0.78rem', color: cat.potrero ? '#4caf50' : '#777' }}>
-                      {cat.potrero ? `Potrero ${cat.potrero}` : 'Sin asignar'}
-                    </span>
-                  </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
-                    <span style={{ fontSize: '1.2rem', fontWeight: 'bold', color: '#fff' }}>{cat.cantidad}</span>
-                    <span style={{ fontSize: '0.78rem', color: '#777' }}>{cat.peso_promedio} kg</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
+          {/* ── FORRAJE section ── */}
+          {activeSection === 'forraje' && (
+            <ForrajePanel
+              hacienda={hacienda}
+              historial={historial}
+              ndviStats={ndviStats}
+              ndviDate={ndviDate}
+            />
+          )}
 
-          {/* Métricas */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
-            <div style={{ display: 'flex', flexDirection: 'column', padding: '0.85rem', backgroundColor: '#2a2a2a', borderRadius: '3px', border: '1px solid #333' }}>
-              <span style={{ fontSize: '0.75rem', color: '#aaa', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '0.4rem' }}>Total animales</span>
-              <span style={{ fontSize: '1.8rem', fontWeight: 'bold', color: '#ffeb3b' }}>{totalAnimales}</span>
+          {/* ── PLANILLA section ── */}
+          {activeSection === 'planilla' && (
+            <div style={{ flex: 1, overflow: 'auto', backgroundColor: '#0d0d0d' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem' }}>
+                <thead>
+                  <tr style={{ backgroundColor: '#111', position: 'sticky', top: 0, zIndex: 1 }}>
+                    {['Potrero', 'Ha', 'Hacienda asignada', 'Cabezas', 'Carga (kg/ha)', 'EV/ha', 'Días ocupación', 'Días descanso'].map(h => (
+                      <th key={h} style={{ padding: '0.6rem 0.75rem', textAlign: 'left', color: '#666', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.4px', fontSize: '0.7rem', borderBottom: '1px solid #222', whiteSpace: 'nowrap' }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {filasPlanilla.map((fila, i) => (
+                    <tr
+                      key={fila.nombre}
+                      onClick={() => { setSelectedPotrero(POSTREROS_GEOJSON.features.find(f => f.properties.nombre === fila.nombre)?.properties); setActiveSection('mapa'); }}
+                      style={{ backgroundColor: selectedPotrero?.nombre === fila.nombre ? '#1e2e1e' : i % 2 === 0 ? '#0d0d0d' : '#111', cursor: 'pointer', borderBottom: '1px solid #181818' }}
+                    >
+                      <td style={{ padding: '0.5rem 0.75rem', fontWeight: '700', color: '#ffeb3b' }}>{fila.nombre}</td>
+                      <td style={{ padding: '0.5rem 0.75rem', color: '#666' }}>{fila.ha.toFixed(1)}</td>
+                      <td style={{ padding: '0.5rem 0.75rem', color: fila.asignadas.length ? '#fff' : '#333' }}>
+                        {fila.asignadas.length ? fila.asignadas.map(a => a.nombre).join(', ') : '—'}
+                      </td>
+                      <td style={{ padding: '0.5rem 0.75rem', color: fila.cabezas ? '#fff' : '#333', textAlign: 'right' }}>
+                        {fila.cabezas || '—'}
+                      </td>
+                      <td style={{ padding: '0.5rem 0.75rem', color: fila.cargaKgHa ? (fila.cargaKgHa > 600 ? '#ff6b6b' : '#4caf50') : '#333', textAlign: 'right', fontWeight: fila.cargaKgHa ? '600' : '400' }}>
+                        {fila.cargaKgHa ? fila.cargaKgHa.toLocaleString() : '—'}
+                      </td>
+                      <td style={{ padding: '0.5rem 0.75rem', color: fila.ev !== '—' ? '#fff' : '#333', textAlign: 'right' }}>{fila.ev}</td>
+                      <td style={{ padding: '0.5rem 0.75rem', color: fila.diasOcupacion !== null ? '#ffeb3b' : '#333', textAlign: 'right' }}>
+                        {fila.diasOcupacion !== null ? `${fila.diasOcupacion}d` : '—'}
+                      </td>
+                      <td style={{ padding: '0.5rem 0.75rem', color: fila.diasDescanso !== null ? '#4caf50' : '#333', textAlign: 'right' }}>
+                        {fila.diasDescanso !== null ? `${fila.diasDescanso}d` : '—'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
-            <div style={{ display: 'flex', flexDirection: 'column', padding: '0.85rem', backgroundColor: '#2a2a2a', borderRadius: '3px', border: '1px solid #333' }}>
-              <span style={{ fontSize: '0.75rem', color: '#aaa', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '0.4rem' }}>Asignados</span>
-              <span style={{ fontSize: '1.8rem', fontWeight: 'bold', color: '#ffeb3b' }}>{hacienda.filter(h => h.potrero).length}/{hacienda.length}</span>
-            </div>
-          </div>
+          )}
+
         </div>
-      </div>
-
-      {/* Planilla de potreros */}
-      {showPlanilla && <div style={{ flex: '0 0 40%', borderTop: '1px solid #333', overflow: 'auto', backgroundColor: '#111' }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem' }}>
-          <thead>
-            <tr style={{ backgroundColor: '#1a1a1a', position: 'sticky', top: 0, zIndex: 1 }}>
-              {['Potrero', 'Ha', 'Hacienda asignada', 'Cabezas', 'Carga (kg/ha)', 'EV/ha', 'Días ocupación', 'Días descanso'].map(h => (
-                <th key={h} style={{ padding: '0.6rem 0.75rem', textAlign: 'left', color: '#aaa', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.4px', fontSize: '0.72rem', borderBottom: '1px solid #333', whiteSpace: 'nowrap' }}>{h}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {filasPlanilla.map((fila, i) => (
-              <tr
-                key={fila.nombre}
-                onClick={() => setSelectedPotrero(POSTREROS_GEOJSON.features.find(f => f.properties.nombre === fila.nombre)?.properties)}
-                style={{ backgroundColor: selectedPotrero?.nombre === fila.nombre ? '#1e2e1e' : i % 2 === 0 ? '#111' : '#151515', cursor: 'pointer', borderBottom: '1px solid #1e1e1e' }}
-              >
-                <td style={{ padding: '0.55rem 0.75rem', fontWeight: '700', color: '#ffeb3b' }}>{fila.nombre}</td>
-                <td style={{ padding: '0.55rem 0.75rem', color: '#aaa' }}>{fila.ha.toFixed(1)}</td>
-                <td style={{ padding: '0.55rem 0.75rem', color: fila.asignadas.length ? '#fff' : '#444' }}>
-                  {fila.asignadas.length ? fila.asignadas.map(a => a.nombre).join(', ') : '—'}
-                </td>
-                <td style={{ padding: '0.55rem 0.75rem', color: fila.cabezas ? '#fff' : '#444', textAlign: 'right' }}>
-                  {fila.cabezas || '—'}
-                </td>
-                <td style={{ padding: '0.55rem 0.75rem', color: fila.cargaKgHa ? (fila.cargaKgHa > 600 ? '#ff6b6b' : '#4caf50') : '#444', textAlign: 'right', fontWeight: fila.cargaKgHa ? '600' : '400' }}>
-                  {fila.cargaKgHa ? fila.cargaKgHa.toLocaleString() : '—'}
-                </td>
-                <td style={{ padding: '0.55rem 0.75rem', color: fila.ev !== '—' ? '#fff' : '#444', textAlign: 'right' }}>{fila.ev}</td>
-                <td style={{ padding: '0.55rem 0.75rem', color: fila.diasOcupacion !== null ? '#ffeb3b' : '#444', textAlign: 'right' }}>
-                  {fila.diasOcupacion !== null ? `${fila.diasOcupacion}d` : '—'}
-                </td>
-                <td style={{ padding: '0.55rem 0.75rem', color: fila.diasDescanso !== null ? '#4caf50' : '#444', textAlign: 'right' }}>
-                  {fila.diasDescanso !== null ? `${fila.diasDescanso}d` : '—'}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>}
-
       </div>
     </div>
   );
