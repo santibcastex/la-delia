@@ -16,8 +16,8 @@ const firebaseConfig = {
   appId: "1:587773821917:web:542ef9f1c9f28e342d2c34"
 };
 
-proj4.defs('EPSG:22175', '+proj=tmerc +lat_0=-90 +lon_0=-60 +k=1 +x_0=5500000 +y_0=0 +ellps=intl +towgs84=-148,136,90,0,0,0,0 +units=m +no_defs');
-const toLatLng = (x, y) => { const [lng, lat] = proj4('EPSG:22175', 'WGS84', [x, y]); return [lat, lng]; };
+proj4.defs('POSGAR94-5', '+proj=tmerc +lat_0=-90 +lon_0=-60 +k=1 +x_0=5500000 +y_0=0 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs');
+const toLatLng = (x, y) => { const [lng, lat] = proj4('POSGAR94-5', 'WGS84', [x, y]); return [lat, lng]; };
 
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
