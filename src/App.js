@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { initializeApp } from 'firebase/app';
@@ -74,7 +74,7 @@ const STYLE_NORMAL  = { color: '#c41e3a', weight: 2, opacity: 0.9, fillColor: '#
 const STYLE_ORIGEN  = { color: '#ff9800', weight: 3, opacity: 1,   fillColor: '#ff9800', fillOpacity: 0.5 };
 const STYLE_DESTINO = { color: '#4caf50', weight: 2, opacity: 0.9, fillColor: '#4caf50', fillOpacity: 0.45 };
 
-function MapView({ onPotreroClick, modoMover, ndviActive, ndviToken, ndviDate }) {
+function MapView({ onPotreroClick, modoMover, ndviActive, ndviDate }) {
   const mapContainer = useRef(null);
   const map = useRef(null);
   const layersRef = useRef({});
@@ -90,20 +90,19 @@ function MapView({ onPotreroClick, modoMover, ndviActive, ndviToken, ndviDate })
       map.current.removeLayer(ndviLayerRef.current);
       ndviLayerRef.current = null;
     }
-    if (ndviActive && ndviToken && ndviDate) {
+    if (ndviActive && ndviDate) {
       const timeRange = `${ndviDate}T00:00:00Z/${ndviDate}T23:59:59Z`;
-      // Usamos proxy server-side para evitar CORS y pasar el token via Authorization header
+      // /api/ndvi-tile obtiene su propio token y calcula NDVI desde Sentinel-2 L2A
       ndviLayerRef.current = L.tileLayer.wms(
-        `/api/ndvi-proxy?token=${encodeURIComponent(ndviToken)}`,
+        '/api/ndvi-tile',
         {
           layers: 'NDVI',
           format: 'image/png',
           transparent: true,
           version: '1.3.0',
           time: timeRange,
-          maxcc: 100,
           opacity: 0.82,
-          attribution: 'NDVI © Copernicus Data Space'
+          attribution: 'NDVI Sentinel-2 © Copernicus'
         }
       );
       ndviLayerRef.current.on('tileerror', (e) => {
@@ -111,7 +110,7 @@ function MapView({ onPotreroClick, modoMover, ndviActive, ndviToken, ndviDate })
       });
       ndviLayerRef.current.addTo(map.current);
     }
-  }, [ndviActive, ndviToken, ndviDate]);
+  }, [ndviActive, ndviDate]);
 
   // Actualizar estilos cuando cambia modoMover
   useEffect(() => {
@@ -183,8 +182,6 @@ function App() {
   const [modoMover, setModoMover] = useState(null);
   const [showNDVI, setShowNDVI] = useState(false);
   const [ndviDate, setNdviDate] = useState(getNdviDates()[0] || '');
-  const [cdseToken, setCdseToken] = useState(null);
-  const tokenTimerRef = useRef(null);
   const NDVI_DATES = getNdviDates();
 
   useEffect(() => {
@@ -246,30 +243,6 @@ function App() {
     }
   };
 
-  const [ndviError, setNdviError] = useState(null);
-
-  const fetchCDSEToken = useCallback(async () => {
-    setNdviError(null);
-    try {
-      const res = await fetch('/api/cdse-token', { method: 'POST' });
-      const data = await res.json();
-      if (data.access_token) {
-        setCdseToken(data.access_token);
-        clearTimeout(tokenTimerRef.current);
-        tokenTimerRef.current = setTimeout(fetchCDSEToken, (data.expires_in - 60) * 1000);
-      } else {
-        setNdviError(data.error_description || data.error || 'Error de autenticación CDSE');
-      }
-    } catch (err) {
-      setNdviError('Sin conexión al servidor CDSE');
-      console.error('CDSE token error:', err);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (showNDVI && !cdseToken) fetchCDSEToken();
-    return () => { if (!showNDVI) clearTimeout(tokenTimerRef.current); };
-  }, [showNDVI, cdseToken, fetchCDSEToken]);
 
   const moverTodoAPotrero = async (origen, destino) => {
     if (origen === destino) { setModoMover(null); return; }
@@ -403,12 +376,12 @@ function App() {
       <div style={{ display: 'flex', flex: 1, flexDirection: 'column', overflow: 'hidden' }}>
       <div style={{ display: 'flex', flex: showPlanilla ? '0 0 60%' : '1', gap: '1px', overflow: 'hidden' }}>
         <div style={{ flex: 2, position: 'relative' }}>
-          <MapView onPotreroClick={handlePotreroClick} modoMover={modoMover} ndviActive={showNDVI} ndviToken={cdseToken} ndviDate={ndviDate} />
+          <MapView onPotreroClick={handlePotreroClick} modoMover={modoMover} ndviActive={showNDVI} ndviDate={ndviDate} />
           {/* Panel control NDVI */}
           {showNDVI && (
             <div style={{ position: 'absolute', bottom: '1.5rem', left: '1rem', zIndex: 1000, backgroundColor: 'rgba(0,0,0,0.82)', borderRadius: '6px', padding: '0.75rem 1rem', color: '#fff', fontSize: '0.82rem', minWidth: '200px' }}>
-              <div style={{ fontWeight: '700', marginBottom: '0.5rem', color: ndviError ? '#ff6b6b' : cdseToken ? '#4caf50' : '#ffeb3b' }}>
-                🌿 NDVI — {ndviError ? '⚠ ' + ndviError : cdseToken ? 'activo' : 'conectando...'}
+              <div style={{ fontWeight: '700', marginBottom: '0.5rem', color: '#4caf50' }}>
+                🌿 NDVI — activo (Sentinel-2)
               </div>
               <label style={{ display: 'block', color: '#aaa', marginBottom: '0.25rem', fontSize: '0.75rem' }}>Fecha (10 días)</label>
               <select
