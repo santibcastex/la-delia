@@ -93,10 +93,10 @@ function MapView({ onPotreroClick, modoMover, ndviActive, ndviToken, ndviDate })
       ndviLayerRef.current = null;
     }
     if (ndviActive && ndviToken && ndviDate) {
-      // Sentinel Hub WMS necesita rango de fechas ISO 8601
       const timeRange = `${ndviDate}T00:00:00Z/${ndviDate}T23:59:59Z`;
+      // Usamos proxy server-side para evitar CORS y pasar el token via Authorization header
       ndviLayerRef.current = L.tileLayer.wms(
-        CDSE_WMS_URL,
+        `/api/ndvi-proxy?token=${encodeURIComponent(ndviToken)}`,
         {
           layers: 'NDVI',
           format: 'image/png',
@@ -105,10 +105,7 @@ function MapView({ onPotreroClick, modoMover, ndviActive, ndviToken, ndviDate })
           time: timeRange,
           maxcc: 100,
           opacity: 0.82,
-          attribution: 'NDVI © Copernicus Data Space',
-          // Token via header no es posible en Leaflet WMS estándar,
-          // usamos el parámetro URL de Sentinel Hub
-          access_token: ndviToken
+          attribution: 'NDVI © Copernicus Data Space'
         }
       );
       ndviLayerRef.current.on('tileerror', (e) => {
