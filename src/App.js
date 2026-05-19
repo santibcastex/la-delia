@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { initializeApp } from 'firebase/app';
-import { getFirestore, collection, getDocs, addDoc, updateDoc, doc } from 'firebase/firestore';
+import { getFirestore, collection, getDocs, addDoc, updateDoc, doc, setDoc } from 'firebase/firestore';
 import { getAuth, signOut, onAuthStateChanged, GoogleAuthProvider, signInWithRedirect, getRedirectResult } from 'firebase/auth';
 import './App.css';
 
@@ -104,6 +104,7 @@ function App() {
   const [user, setUser] = useState(null);
   const [authReady, setAuthReady] = useState(false);
   const [hacienda, setHacienda] = useState(HACIENDA_INICIAL);
+  const [historial, setHistorial] = useState({});
   const [selectedPotrero, setSelectedPotrero] = useState(null);
   const [draggedCategory, setDraggedCategory] = useState(null);
   const [dropOver, setDropOver] = useState(false);
@@ -120,16 +121,21 @@ function App() {
 
   const cargarHaciendaDeFirestore = async () => {
     try {
-      const snapshot = await getDocs(collection(db, 'hacienda'));
-      if (snapshot.size === 0) {
+      const [snapHacienda, snapHistorial] = await Promise.all([
+        getDocs(collection(db, 'hacienda')),
+        getDocs(collection(db, 'historial_potreros'))
+      ]);
+      if (snapHacienda.size === 0) {
         for (const h of HACIENDA_INICIAL) {
           await addDoc(collection(db, 'hacienda'), h);
         }
         setHacienda(HACIENDA_INICIAL);
       } else {
-        const data = snapshot.docs.map(d => ({ ...d.data(), docId: d.id }));
-        setHacienda(data);
+        setHacienda(snapHacienda.docs.map(d => ({ ...d.data(), docId: d.id })));
       }
+      const hist = {};
+      snapHistorial.docs.forEach(d => { hist[d.id] = d.data(); });
+      setHistorial(hist);
     } catch (error) {
       console.error('Error:', error);
     }
@@ -138,12 +144,21 @@ function App() {
   const moverAPotrero = async (categoriaId, potreroNombre) => {
     const cat = hacienda.find(h => h.id === categoriaId);
     if (!cat || !cat.docId) return;
+    const ahora = new Date().toISOString();
     try {
-      await updateDoc(doc(db, 'hacienda', cat.docId), {
-        potrero: potreroNombre,
-        fecha_ingreso: potreroNombre ? new Date().toISOString() : null
-      });
-      setHacienda(prev => prev.map(h => h.id === categoriaId ? { ...h, potrero: potreroNombre } : h));
+      const update = potreroNombre
+        ? { potrero: potreroNombre, fecha_ingreso: ahora, fecha_salida: null }
+        : { potrero: null, fecha_ingreso: null, fecha_salida: ahora };
+      await updateDoc(doc(db, 'hacienda', cat.docId), update);
+
+      // Si desasignamos, registrar fecha_salida en historial del potrero
+      if (!potreroNombre && cat.potrero) {
+        const histRef = doc(db, 'historial_potreros', cat.potrero);
+        await setDoc(histRef, { fecha_ultima_salida: ahora, nombre: cat.potrero }, { merge: true });
+        setHistorial(prev => ({ ...prev, [cat.potrero]: { ...prev[cat.potrero], fecha_ultima_salida: ahora } }));
+      }
+
+      setHacienda(prev => prev.map(h => h.id === categoriaId ? { ...h, ...update } : h));
     } catch (error) {
       console.error('Error:', error);
     }
@@ -168,6 +183,28 @@ function App() {
 
   const totalAnimales = hacienda.reduce((sum, h) => sum + (h.cantidad || 0), 0);
 
+  const diasDesde = (isoDate) => {
+    if (!isoDate) return null;
+    return Math.floor((Date.now() - new Date(isoDate).getTime()) / 86400000);
+  };
+
+  const filasPlanilla = POSTREROS_GEOJSON.features.map(f => {
+    const nombre = f.properties.nombre;
+    const ha = f.properties.ha;
+    const asignadas = hacienda.filter(h => h.potrero === nombre);
+    const cabezas = asignadas.reduce((s, h) => s + (h.cantidad || 0), 0);
+    const kgTotales = asignadas.reduce((s, h) => s + (h.cantidad || 0) * (h.peso_promedio || 0), 0);
+    const cargaKgHa = ha > 0 ? Math.round(kgTotales / ha) : 0;
+    const ev = ha > 0 ? (kgTotales / 450 / ha).toFixed(2) : '—';
+    const fechaIngreso = asignadas.length > 0
+      ? asignadas.reduce((min, h) => (!min || h.fecha_ingreso < min ? h.fecha_ingreso : min), null)
+      : null;
+    const diasOcupacion = fechaIngreso ? diasDesde(fechaIngreso) : null;
+    const fechaSalida = historial[nombre]?.fecha_ultima_salida || null;
+    const diasDescanso = !fechaIngreso && fechaSalida ? diasDesde(fechaSalida) : null;
+    return { nombre, ha, asignadas, cabezas, cargaKgHa, ev, diasOcupacion, diasDescanso };
+  });
+
   if (!authReady) {
     return (
       <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', backgroundColor: '#0a0a0a', color: '#fff', fontFamily: 'sans-serif' }}>
@@ -191,7 +228,7 @@ function App() {
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', backgroundColor: '#0a0a0a', color: '#fff', fontFamily: 'sans-serif' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', backgroundColor: '#0a0a0a', color: '#fff', fontFamily: 'sans-serif', overflow: 'hidden' }}>
       <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '1.5rem 2rem', backgroundColor: '#1a1a1a', borderBottom: '1px solid #333' }}>
         <div>
           <h1 style={{ fontSize: '2.5rem', fontWeight: '300', margin: '0 0 0.25rem 0', letterSpacing: '1px' }}>Ea La Delia</h1>
@@ -205,7 +242,8 @@ function App() {
         </div>
       </header>
 
-      <div style={{ display: 'flex', flex: 1, gap: '1px', overflow: 'hidden' }}>
+      <div style={{ display: 'flex', flex: 1, flexDirection: 'column', overflow: 'hidden' }}>
+      <div style={{ display: 'flex', flex: '0 0 60%', gap: '1px', overflow: 'hidden' }}>
         <div style={{ flex: 2, position: 'relative' }}>
           <MapView onPotreroClick={setSelectedPotrero} />
         </div>
@@ -311,6 +349,49 @@ function App() {
             </div>
           </div>
         </div>
+      </div>
+
+      {/* Planilla de potreros */}
+      <div style={{ flex: '0 0 40%', borderTop: '1px solid #333', overflow: 'auto', backgroundColor: '#111' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem' }}>
+          <thead>
+            <tr style={{ backgroundColor: '#1a1a1a', position: 'sticky', top: 0, zIndex: 1 }}>
+              {['Potrero', 'Ha', 'Hacienda asignada', 'Cabezas', 'Carga (kg/ha)', 'EV/ha', 'Días ocupación', 'Días descanso'].map(h => (
+                <th key={h} style={{ padding: '0.6rem 0.75rem', textAlign: 'left', color: '#aaa', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.4px', fontSize: '0.72rem', borderBottom: '1px solid #333', whiteSpace: 'nowrap' }}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {filasPlanilla.map((fila, i) => (
+              <tr
+                key={fila.nombre}
+                onClick={() => setSelectedPotrero(POSTREROS_GEOJSON.features.find(f => f.properties.nombre === fila.nombre)?.properties)}
+                style={{ backgroundColor: selectedPotrero?.nombre === fila.nombre ? '#1e2e1e' : i % 2 === 0 ? '#111' : '#151515', cursor: 'pointer', borderBottom: '1px solid #1e1e1e' }}
+              >
+                <td style={{ padding: '0.55rem 0.75rem', fontWeight: '700', color: '#ffeb3b' }}>{fila.nombre}</td>
+                <td style={{ padding: '0.55rem 0.75rem', color: '#aaa' }}>{fila.ha.toFixed(1)}</td>
+                <td style={{ padding: '0.55rem 0.75rem', color: fila.asignadas.length ? '#fff' : '#444' }}>
+                  {fila.asignadas.length ? fila.asignadas.map(a => a.nombre).join(', ') : '—'}
+                </td>
+                <td style={{ padding: '0.55rem 0.75rem', color: fila.cabezas ? '#fff' : '#444', textAlign: 'right' }}>
+                  {fila.cabezas || '—'}
+                </td>
+                <td style={{ padding: '0.55rem 0.75rem', color: fila.cargaKgHa ? (fila.cargaKgHa > 600 ? '#ff6b6b' : '#4caf50') : '#444', textAlign: 'right', fontWeight: fila.cargaKgHa ? '600' : '400' }}>
+                  {fila.cargaKgHa ? fila.cargaKgHa.toLocaleString() : '—'}
+                </td>
+                <td style={{ padding: '0.55rem 0.75rem', color: fila.ev !== '—' ? '#fff' : '#444', textAlign: 'right' }}>{fila.ev}</td>
+                <td style={{ padding: '0.55rem 0.75rem', color: fila.diasOcupacion !== null ? '#ffeb3b' : '#444', textAlign: 'right' }}>
+                  {fila.diasOcupacion !== null ? `${fila.diasOcupacion}d` : '—'}
+                </td>
+                <td style={{ padding: '0.55rem 0.75rem', color: fila.diasDescanso !== null ? '#4caf50' : '#444', textAlign: 'right' }}>
+                  {fila.diasDescanso !== null ? `${fila.diasDescanso}d` : '—'}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
       </div>
     </div>
   );
