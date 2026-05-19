@@ -8,7 +8,6 @@ import './App.css';
 
 const CDSE_INSTANCE_ID = '54afbc0c-becd-4db7-85f8-041c93af8475';
 const CDSE_WMS_URL = `https://sh.dataspace.copernicus.eu/ogc/wms/${CDSE_INSTANCE_ID}`;
-const CDSE_TOKEN_URL = 'https://identity.dataspace.copernicus.eu/auth/realms/CDSE/protocol/openid-connect/token';
 
 const getNdviDates = () => {
   const dates = [];
@@ -243,22 +242,14 @@ function App() {
   const fetchCDSEToken = useCallback(async () => {
     setNdviError(null);
     try {
-      const res = await fetch(CDSE_TOKEN_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({
-          grant_type: 'client_credentials',
-          client_id: process.env.REACT_APP_CDSE_CLIENT_ID || 'sh-31775612-b086-405f-bcde-b641ef8c93e6',
-          client_secret: process.env.REACT_APP_CDSE_CLIENT_SECRET || 'HnjsODa853crue28MgGDEHDW1dktQy2d'
-        })
-      });
+      const res = await fetch('/api/cdse-token', { method: 'POST' });
       const data = await res.json();
       if (data.access_token) {
         setCdseToken(data.access_token);
         clearTimeout(tokenTimerRef.current);
         tokenTimerRef.current = setTimeout(fetchCDSEToken, (data.expires_in - 60) * 1000);
       } else {
-        setNdviError(data.error_description || 'Error de autenticación CDSE');
+        setNdviError(data.error_description || data.error || 'Error de autenticación CDSE');
       }
     } catch (err) {
       setNdviError('Sin conexión al servidor CDSE');
