@@ -118,8 +118,9 @@ function MapView({ onPotreroClick, modoMover, ndviActive, ndviDate, ndviIndex, s
 
   // Mostrar/ocultar mapa base satelital
   useEffect(() => {
-    if (!baseTileRef.current) return;
+    if (!baseTileRef.current || !map.current) return;
     baseTileRef.current.setOpacity(showBasemap ? 1 : 0);
+    map.current.getContainer().style.backgroundColor = showBasemap ? '#000' : '#fff';
   }, [showBasemap]);
 
   // Actualizar estilos cuando cambia modoMover
