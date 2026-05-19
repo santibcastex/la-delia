@@ -40,9 +40,14 @@ async function getToken() {
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
 
-  const { BBOX, WIDTH = '256', HEIGHT = '256', TIME } = req.query;
+  // Leaflet envía parámetros WMS en minúsculas
+  const q = req.query;
+  const BBOX = q.BBOX || q.bbox;
+  const WIDTH = q.WIDTH || q.width || '256';
+  const HEIGHT = q.HEIGHT || q.height || '256';
+  const TIME = q.TIME || q.time;
 
-  if (!BBOX) return res.status(400).json({ error: 'BBOX requerido' });
+  if (!BBOX) return res.status(400).json({ error: 'BBOX requerido', query: q });
 
   // Parsear BBOX (viene en EPSG:3857 desde Leaflet WMS 1.3.0: minx,miny,maxx,maxy)
   const [minx, miny, maxx, maxy] = BBOX.split(',').map(Number);
