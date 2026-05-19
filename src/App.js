@@ -238,15 +238,18 @@ function App() {
     }
   };
 
+  const [ndviError, setNdviError] = useState(null);
+
   const fetchCDSEToken = useCallback(async () => {
+    setNdviError(null);
     try {
       const res = await fetch(CDSE_TOKEN_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams({
           grant_type: 'client_credentials',
-          client_id: process.env.REACT_APP_CDSE_CLIENT_ID || '',
-          client_secret: process.env.REACT_APP_CDSE_CLIENT_SECRET || ''
+          client_id: process.env.REACT_APP_CDSE_CLIENT_ID || 'sh-31775612-b086-405f-bcde-b641ef8c93e6',
+          client_secret: process.env.REACT_APP_CDSE_CLIENT_SECRET || 'HnjsODa853crue28MgGDEHDW1dktQy2d'
         })
       });
       const data = await res.json();
@@ -254,8 +257,13 @@ function App() {
         setCdseToken(data.access_token);
         clearTimeout(tokenTimerRef.current);
         tokenTimerRef.current = setTimeout(fetchCDSEToken, (data.expires_in - 60) * 1000);
+      } else {
+        setNdviError(data.error_description || 'Error de autenticación CDSE');
       }
-    } catch (err) { console.error('CDSE token error:', err); }
+    } catch (err) {
+      setNdviError('Sin conexión al servidor CDSE');
+      console.error('CDSE token error:', err);
+    }
   }, []);
 
   useEffect(() => {
@@ -383,7 +391,9 @@ function App() {
           {/* Panel control NDVI */}
           {showNDVI && (
             <div style={{ position: 'absolute', bottom: '1.5rem', left: '1rem', zIndex: 1000, backgroundColor: 'rgba(0,0,0,0.82)', borderRadius: '6px', padding: '0.75rem 1rem', color: '#fff', fontSize: '0.82rem', minWidth: '200px' }}>
-              <div style={{ fontWeight: '700', marginBottom: '0.5rem', color: '#4caf50' }}>🌿 NDVI — {cdseToken ? 'activo' : 'conectando...'}</div>
+              <div style={{ fontWeight: '700', marginBottom: '0.5rem', color: ndviError ? '#ff6b6b' : cdseToken ? '#4caf50' : '#ffeb3b' }}>
+                🌿 NDVI — {ndviError ? '⚠ ' + ndviError : cdseToken ? 'activo' : 'conectando...'}
+              </div>
               <label style={{ display: 'block', color: '#aaa', marginBottom: '0.25rem', fontSize: '0.75rem' }}>Fecha (10 días)</label>
               <select
                 value={ndviDate}
