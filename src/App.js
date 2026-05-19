@@ -71,6 +71,7 @@ const HACIENDA_INICIAL = [
 ];
 
 const STYLE_NORMAL  = { color: '#c41e3a', weight: 2, opacity: 0.9, fillColor: '#2d5016', fillOpacity: 0.4 };
+const STYLE_NDVI    = { color: '#fff',    weight: 1.5, opacity: 0.85, fillColor: '#000', fillOpacity: 0 };
 const STYLE_ORIGEN  = { color: '#ff9800', weight: 3, opacity: 1,   fillColor: '#ff9800', fillOpacity: 0.5 };
 const STYLE_DESTINO = { color: '#4caf50', weight: 2, opacity: 0.9, fillColor: '#4caf50', fillOpacity: 0.45 };
 
@@ -85,12 +86,15 @@ function MapView({ onPotreroClick, modoMover, ndviActive, ndviDate, ndviIndex, s
   const mapContainer = useRef(null);
   const map = useRef(null);
   const layersRef = useRef({});
+  const labelsRef = useRef([]);
   const ndviLayerRef = useRef(null);
   const maskLayerRef = useRef(null);
   const baseTileRef = useRef(null);
   const onClickRef = useRef(onPotreroClick);
+  const ndviActiveRef = useRef(ndviActive);
 
   useEffect(() => { onClickRef.current = onPotreroClick; }, [onPotreroClick]);
+  useEffect(() => { ndviActiveRef.current = ndviActive; }, [ndviActive]);
 
   // Capa NDVI + máscara fuera del campo
   useEffect(() => {
@@ -123,12 +127,24 @@ function MapView({ onPotreroClick, modoMover, ndviActive, ndviDate, ndviIndex, s
     map.current.getContainer().style.backgroundColor = showBasemap ? '#000' : '#fff';
   }, [showBasemap]);
 
+  // Modo NDVI: contorno blanco sin fill, labels ocultos
+  useEffect(() => {
+    if (!map.current) return;
+    Object.values(layersRef.current).forEach(polys =>
+      polys.forEach(p => p.setStyle(ndviActive ? STYLE_NDVI : STYLE_NORMAL))
+    );
+    labelsRef.current.forEach(m => {
+      const el = m.getElement();
+      if (el) el.style.display = ndviActive ? 'none' : '';
+    });
+  }, [ndviActive]);
+
   // Actualizar estilos cuando cambia modoMover
   useEffect(() => {
     Object.entries(layersRef.current).forEach(([nombre, polys]) => {
       const style = modoMover
         ? (nombre === modoMover ? STYLE_ORIGEN : STYLE_DESTINO)
-        : STYLE_NORMAL;
+        : (ndviActiveRef.current ? STYLE_NDVI : STYLE_NORMAL);
       polys.forEach(p => p.setStyle(style));
     });
   }, [modoMover]);
@@ -154,8 +170,12 @@ function MapView({ onPotreroClick, modoMover, ndviActive, ndviDate, ndviIndex, s
         const polygon = L.polygon(rings, STYLE_NORMAL);
         polygon.bindPopup(`<strong>Potrero ${props.nombre}</strong><br/>${props.ha.toFixed(1)} ha`);
         polygon.on('click', () => onClickRef.current(props));
-        polygon.on('mouseover', function () { this.setStyle({ weight: 3, fillOpacity: 0.65 }); });
+        polygon.on('mouseover', function () {
+          if (ndviActiveRef.current) return;
+          this.setStyle({ weight: 3, fillOpacity: 0.65 });
+        });
         polygon.on('mouseout', function () {
+          if (ndviActiveRef.current) return;
           const s = layersRef.current[props.nombre]?.[0]?.options || STYLE_NORMAL;
           this.setStyle({ weight: s.weight || 2, fillOpacity: s.fillOpacity || 0.4 });
         });
@@ -165,13 +185,14 @@ function MapView({ onPotreroClick, modoMover, ndviActive, ndviDate, ndviIndex, s
       });
 
       const center = firstPolygon.getBounds().getCenter();
-      L.marker(center, {
+      const label = L.marker(center, {
         icon: L.divIcon({
           html: `<div style="text-align:center;font-family:'Courier New',monospace;color:#ffeb3b;text-shadow:1px 1px 3px rgba(0,0,0,0.7);font-weight:bold;pointer-events:none"><div style="font-size:13px">${props.nombre}</div><div style="font-size:12px">${props.ha.toFixed(1)} ha</div></div>`,
           className: 'potrero-label',
           iconSize: [70, 45]
         })
       }).addTo(map.current);
+      labelsRef.current.push(label);
     });
 
     return () => { map.current.remove(); map.current = null; };
