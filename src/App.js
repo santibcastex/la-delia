@@ -75,16 +75,74 @@ const STYLE_NDVI    = { color: '#fff',    weight: 1.5, opacity: 0.85, fillColor:
 const STYLE_ORIGEN  = { color: '#ff9800', weight: 3, opacity: 1,   fillColor: '#ff9800', fillOpacity: 0.5 };
 const STYLE_DESTINO = { color: '#4caf50', weight: 2, opacity: 0.9, fillColor: '#4caf50', fillOpacity: 0.45 };
 
-// Máscara NDVI: huecos en cada potrero (outer ring se elige en runtime según basemap)
-const MASK_HOLES = (() => {
-  const holes = [];
-  POSTREROS_GEOJSON.features.forEach(f => {
-    f.geometry.coordinates.forEach(poly => {
-      poly.forEach(ring => holes.push(ring.map(pt => [pt[1], pt[0]])));
-    });
-  });
-  return holes;
-})();
+// Canvas layer: dibuja la imagen NDVI recortada exactamente al polígono del campo
+function makeNdviCanvasLayer(url, farmBoundsLL) {
+  const layer = {
+    _url: url,
+    _canvas: null,
+    _img: null,
+    _imgLoaded: false,
+    _map: null,
+    _onZoom: null,
+
+    addTo(map) {
+      this._map = map;
+      const canvas = document.createElement('canvas');
+      canvas.style.position = 'absolute';
+      canvas.style.pointerEvents = 'none';
+      canvas.style.opacity = '0.92';
+      map.getPanes().overlayPane.appendChild(canvas);
+      this._canvas = canvas;
+
+      const img = new Image();
+      img.onload = () => { this._imgLoaded = true; this._render(); };
+      img.src = url;
+      this._img = img;
+
+      this._onZoom = () => this._render();
+      map.on('zoomend', this._onZoom);
+      return this;
+    },
+
+    remove() {
+      if (this._canvas?.parentNode) this._canvas.parentNode.removeChild(this._canvas);
+      if (this._map && this._onZoom) this._map.off('zoomend', this._onZoom);
+      this._map = null;
+    },
+
+    _render() {
+      if (!this._imgLoaded || !this._map) return;
+      const map = this._map;
+      const nw = map.latLngToLayerPoint(farmBoundsLL.getNorthWest());
+      const se = map.latLngToLayerPoint(farmBoundsLL.getSouthEast());
+      const w = Math.max(1, se.x - nw.x);
+      const h = Math.max(1, se.y - nw.y);
+
+      this._canvas.width = w;
+      this._canvas.height = h;
+      L.DomUtil.setPosition(this._canvas, nw);
+
+      const ctx = this._canvas.getContext('2d');
+      ctx.clearRect(0, 0, w, h);
+
+      // Recorte al polígono exacto de cada potrero (regla even-odd = múltiples polígonos)
+      ctx.beginPath();
+      POSTREROS_GEOJSON.features.forEach(f => {
+        f.geometry.coordinates.forEach(poly => {
+          poly[0].forEach((pt, i) => {
+            const p = map.latLngToLayerPoint(L.latLng(pt[1], pt[0]));
+            if (i === 0) ctx.moveTo(p.x - nw.x, p.y - nw.y);
+            else ctx.lineTo(p.x - nw.x, p.y - nw.y);
+          });
+          ctx.closePath();
+        });
+      });
+      ctx.clip('evenodd');
+      ctx.drawImage(this._img, 0, 0, w, h);
+    }
+  };
+  return layer;
+}
 
 function MapView({ onPotreroClick, modoMover, ndviActive, ndviDate, ndviIndex, showBasemap, onHoverValue }) {
   const mapContainer = useRef(null);
@@ -92,7 +150,6 @@ function MapView({ onPotreroClick, modoMover, ndviActive, ndviDate, ndviIndex, s
   const layersRef = useRef({});
   const labelsRef = useRef([]);
   const ndviLayerRef = useRef(null);
-  const ndviMaskRef = useRef(null);
   const baseTileRef = useRef(null);
   const onClickRef = useRef(onPotreroClick);
   const ndviActiveRef = useRef(ndviActive);
@@ -104,33 +161,16 @@ function MapView({ onPotreroClick, modoMover, ndviActive, ndviDate, ndviIndex, s
   // Farm bounds para imageOverlay (calculados del GeoJSON)
   const FARM_BOUNDS = [[-36.9290, -58.6160], [-36.8775, -58.5480]];
 
-  // Imagen NDVI: no depende de showBasemap para no recargar la imagen al cambiar basemap
+  // Imagen NDVI recortada al polígono exacto del campo (canvas layer)
   useEffect(() => {
     if (!map.current) return;
-    if (ndviLayerRef.current) { map.current.removeLayer(ndviLayerRef.current); ndviLayerRef.current = null; }
+    if (ndviLayerRef.current) { ndviLayerRef.current.remove(); ndviLayerRef.current = null; }
     if (ndviActive && ndviDate) {
       const url = `/api/ndvi-farm?index=${encodeURIComponent(ndviIndex)}&date=${ndviDate}`;
-      ndviLayerRef.current = L.imageOverlay(url, FARM_BOUNDS, {
-        opacity: 0.9, attribution: 'Sentinel-2 © Copernicus', interactive: false
-      }).addTo(map.current);
+      const bounds = L.latLngBounds(FARM_BOUNDS);
+      ndviLayerRef.current = makeNdviCanvasLayer(url, bounds).addTo(map.current);
     }
   }, [ndviActive, ndviDate, ndviIndex]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Máscara NDVI: se recrea al cambiar basemap para ajustar el outer ring
-  useEffect(() => {
-    if (!map.current) return;
-    if (ndviMaskRef.current) { map.current.removeLayer(ndviMaskRef.current); ndviMaskRef.current = null; }
-    if (!ndviActive) return;
-    // Con satélite: outer ring = bbox del campo → satélite visible afuera del bbox
-    // Sin satélite: outer ring = mundo → fondo blanco en todo lo que no es potrero
-    const outerRing = showBasemap
-      ? [[-36.9290, -58.6160], [-36.9290, -58.5480], [-36.8775, -58.5480], [-36.8775, -58.6160]]
-      : [[90, -180], [90, 180], [-90, 180], [-90, -180]];
-    ndviMaskRef.current = L.polygon([outerRing, ...MASK_HOLES], {
-      fillColor: showBasemap ? '#111' : '#fff',
-      fillOpacity: 1, stroke: false, interactive: false
-    }).addTo(map.current);
-  }, [ndviActive, showBasemap]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Mostrar/ocultar mapa base satelital
   useEffect(() => {
