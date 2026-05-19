@@ -53,9 +53,27 @@ const HACIENDA_INICIAL = [
   { id: 5, nombre: 'Vaquillonas +2 Años', cantidad: 219, peso_promedio: 420, potrero: null }
 ];
 
-function MapView({ onPotreroClick }) {
+const STYLE_NORMAL  = { color: '#c41e3a', weight: 2, opacity: 0.9, fillColor: '#2d5016', fillOpacity: 0.4 };
+const STYLE_ORIGEN  = { color: '#ff9800', weight: 3, opacity: 1,   fillColor: '#ff9800', fillOpacity: 0.5 };
+const STYLE_DESTINO = { color: '#4caf50', weight: 2, opacity: 0.9, fillColor: '#4caf50', fillOpacity: 0.45 };
+
+function MapView({ onPotreroClick, modoMover }) {
   const mapContainer = useRef(null);
   const map = useRef(null);
+  const layersRef = useRef({});       // { [nombre]: [polygon, ...] }
+  const onClickRef = useRef(onPotreroClick);
+
+  useEffect(() => { onClickRef.current = onPotreroClick; }, [onPotreroClick]);
+
+  // Actualizar estilos cuando cambia modoMover
+  useEffect(() => {
+    Object.entries(layersRef.current).forEach(([nombre, polys]) => {
+      const style = modoMover
+        ? (nombre === modoMover ? STYLE_ORIGEN : STYLE_DESTINO)
+        : STYLE_NORMAL;
+      polys.forEach(p => p.setStyle(style));
+    });
+  }, [modoMover]);
 
   useEffect(() => {
     map.current = L.map(mapContainer.current).setView([-36.905, -58.607], 13);
@@ -67,20 +85,24 @@ function MapView({ onPotreroClick }) {
 
     POSTREROS_GEOJSON.features.forEach(feature => {
       const { geometry, properties: props } = feature;
-      const style = { color: '#c41e3a', weight: 2, opacity: 0.9, fillColor: '#2d5016', fillOpacity: 0.4 };
 
       const polygonRings = geometry.type === 'MultiPolygon'
         ? geometry.coordinates.map(poly => poly.map(ring => convertRing(ring)))
         : [geometry.coordinates.map(ring => convertRing(ring))];
 
+      layersRef.current[props.nombre] = [];
       let firstPolygon = null;
       polygonRings.forEach(rings => {
-        const polygon = L.polygon(rings, style);
+        const polygon = L.polygon(rings, STYLE_NORMAL);
         polygon.bindPopup(`<strong>Potrero ${props.nombre}</strong><br/>${props.ha.toFixed(1)} ha`);
-        polygon.on('click', () => onPotreroClick(props));
-        polygon.on('mouseover', function () { this.setStyle({ weight: 3, fillOpacity: 0.6 }); });
-        polygon.on('mouseout', function () { this.setStyle({ weight: 2, fillOpacity: 0.4 }); });
+        polygon.on('click', () => onClickRef.current(props));
+        polygon.on('mouseover', function () { this.setStyle({ weight: 3, fillOpacity: 0.65 }); });
+        polygon.on('mouseout', function () {
+          const s = layersRef.current[props.nombre]?.[0]?.options || STYLE_NORMAL;
+          this.setStyle({ weight: s.weight || 2, fillOpacity: s.fillOpacity || 0.4 });
+        });
         polygon.addTo(map.current);
+        layersRef.current[props.nombre].push(polygon);
         if (!firstPolygon) firstPolygon = polygon;
       });
 
@@ -97,7 +119,7 @@ function MapView({ onPotreroClick }) {
     return () => { map.current.remove(); map.current = null; };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  return <div ref={mapContainer} style={{ width: '100%', height: '100%' }} />;
+  return <div ref={mapContainer} style={{ width: '100%', height: '100%', cursor: modoMover ? 'crosshair' : 'grab' }} />;
 }
 
 function App() {
@@ -109,6 +131,7 @@ function App() {
   const [draggedCategory, setDraggedCategory] = useState(null);
   const [dropOver, setDropOver] = useState(false);
   const [showPlanilla, setShowPlanilla] = useState(false);
+  const [modoMover, setModoMover] = useState(null); // nombre del potrero origen
 
   useEffect(() => {
     getRedirectResult(auth).catch(() => {});
@@ -162,6 +185,35 @@ function App() {
       setHacienda(prev => prev.map(h => h.id === categoriaId ? { ...h, ...update } : h));
     } catch (error) {
       console.error('Error:', error);
+    }
+  };
+
+  const moverTodoAPotrero = async (origen, destino) => {
+    if (origen === destino) { setModoMover(null); return; }
+    const ahora = new Date().toISOString();
+    const categoriasOrigen = hacienda.filter(h => h.potrero === origen);
+    try {
+      await Promise.all(categoriasOrigen.map(cat =>
+        updateDoc(doc(db, 'hacienda', cat.docId), { potrero: destino, fecha_ingreso: ahora, fecha_salida: null })
+      ));
+      const histRef = doc(db, 'historial_potreros', origen);
+      await setDoc(histRef, { fecha_ultima_salida: ahora, nombre: origen }, { merge: true });
+      setHistorial(prev => ({ ...prev, [origen]: { ...prev[origen], fecha_ultima_salida: ahora } }));
+      setHacienda(prev => prev.map(h =>
+        h.potrero === origen ? { ...h, potrero: destino, fecha_ingreso: ahora, fecha_salida: null } : h
+      ));
+      setSelectedPotrero(POSTREROS_GEOJSON.features.find(f => f.properties.nombre === destino)?.properties);
+    } catch (error) {
+      console.error('Error:', error);
+    }
+    setModoMover(null);
+  };
+
+  const handlePotreroClick = (props) => {
+    if (modoMover) {
+      moverTodoAPotrero(modoMover, props.nombre);
+    } else {
+      setSelectedPotrero(props);
     }
   };
 
@@ -249,7 +301,13 @@ function App() {
       <div style={{ display: 'flex', flex: 1, flexDirection: 'column', overflow: 'hidden' }}>
       <div style={{ display: 'flex', flex: showPlanilla ? '0 0 60%' : '1', gap: '1px', overflow: 'hidden' }}>
         <div style={{ flex: 2, position: 'relative' }}>
-          <MapView onPotreroClick={setSelectedPotrero} />
+          <MapView onPotreroClick={handlePotreroClick} modoMover={modoMover} />
+          {modoMover && (
+            <div style={{ position: 'absolute', top: '1rem', left: '50%', transform: 'translateX(-50%)', backgroundColor: '#4caf50', color: '#000', padding: '0.6rem 1.5rem', borderRadius: '4px', fontWeight: '700', fontSize: '0.9rem', zIndex: 1000, boxShadow: '0 2px 12px rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', gap: '1rem' }}>
+              Seleccioná el potrero destino en el mapa
+              <button onClick={() => setModoMover(null)} style={{ background: 'rgba(0,0,0,0.2)', border: 'none', color: '#000', cursor: 'pointer', borderRadius: '3px', padding: '0.2rem 0.5rem', fontWeight: '700' }}>✕ Cancelar</button>
+            </div>
+          )}
         </div>
 
         <div style={{ flex: 1, backgroundColor: '#1a1a1a', borderLeft: '1px solid #333', overflow: 'auto', padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
@@ -276,6 +334,16 @@ function App() {
                   <span style={{ display: 'block', fontSize: '1.4rem', fontWeight: 'bold', color: '#ffeb3b' }}>{hacienda.filter(h => h.potrero === selectedPotrero.nombre).length}</span>
                 </div>
               </div>
+
+              {/* Botón mover todo */}
+              {hacienda.filter(h => h.potrero === selectedPotrero.nombre).length > 0 && (
+                <button
+                  onClick={() => setModoMover(selectedPotrero.nombre)}
+                  style={{ width: '100%', padding: '0.5rem', marginBottom: '0.75rem', backgroundColor: '#ff9800', color: '#000', border: 'none', borderRadius: '3px', cursor: 'pointer', fontWeight: '700', fontSize: '0.85rem' }}
+                >
+                  Mover todo a otro potrero →
+                </button>
+              )}
 
               {/* Categorías asignadas a este potrero */}
               {hacienda.filter(h => h.potrero === selectedPotrero.nombre).length > 0 && (
