@@ -6,8 +6,6 @@ import { getFirestore, collection, getDocs, addDoc, updateDoc, doc, setDoc } fro
 import { getAuth, signOut, onAuthStateChanged, GoogleAuthProvider, signInWithRedirect, getRedirectResult } from 'firebase/auth';
 import './App.css';
 
-const CDSE_INSTANCE_ID = '54afbc0c-becd-4db7-85f8-041c93af8475';
-const CDSE_WMS_URL = `https://sh.dataspace.copernicus.eu/ogc/wms/${CDSE_INSTANCE_ID}`;
 
 const getNdviDates = () => {
   const dates = [];
