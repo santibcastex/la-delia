@@ -52,18 +52,22 @@ export default async function handler(req, res) {
   // Parsear BBOX (viene en EPSG:3857 desde Leaflet WMS 1.3.0: minx,miny,maxx,maxy)
   const [minx, miny, maxx, maxy] = BBOX.split(',').map(Number);
 
-  // Determinar rango de fechas: si TIME viene como rango lo usamos, si no los últimos 45 días
+  // Determinar rango de fechas: siempre 30 días hasta la fecha elegida
+  // Sentinel-2 tiene revisita ~5 días — un rango de 1 día devuelve vacío casi siempre
   let timeFrom, timeTo;
-  if (TIME && TIME.includes('/')) {
-    [timeFrom, timeTo] = TIME.split('/');
-  } else if (TIME) {
-    timeFrom = TIME;
-    timeTo = TIME;
+  if (TIME) {
+    // TIME puede venir como "2025-12-01T00:00:00Z/2025-12-01T23:59:59Z" o solo "2025-12-01"
+    const endDate = TIME.includes('/') ? TIME.split('/')[1] : TIME.replace('T00:00:00Z', 'T23:59:59Z');
+    const end = new Date(endDate);
+    const start = new Date(end);
+    start.setDate(start.getDate() - 30);
+    timeFrom = start.toISOString();
+    timeTo = end.toISOString();
   } else {
     const now = new Date();
     timeTo = now.toISOString();
     const from = new Date(now);
-    from.setDate(from.getDate() - 45);
+    from.setDate(from.getDate() - 30);
     timeFrom = from.toISOString();
   }
 
