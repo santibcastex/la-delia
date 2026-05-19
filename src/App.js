@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { initializeApp } from 'firebase/app';
-import { getFirestore, collection, getDocs, addDoc } from 'firebase/firestore';
+import { getFirestore, collection, getDocs, addDoc, updateDoc, doc } from 'firebase/firestore';
 import { getAuth, signOut, onAuthStateChanged, GoogleAuthProvider, signInWithRedirect, getRedirectResult } from 'firebase/auth';
 import './App.css';
 
@@ -106,6 +106,7 @@ function App() {
   const [hacienda, setHacienda] = useState(HACIENDA_INICIAL);
   const [selectedPotrero, setSelectedPotrero] = useState(null);
   const [draggedCategory, setDraggedCategory] = useState(null);
+  const [dropOver, setDropOver] = useState(false);
 
   useEffect(() => {
     getRedirectResult(auth).catch(() => {});
@@ -129,6 +130,20 @@ function App() {
         const data = snapshot.docs.map(d => ({ ...d.data(), docId: d.id }));
         setHacienda(data);
       }
+    } catch (error) {
+      console.error('Error:', error);
+    }
+  };
+
+  const moverAPotrero = async (categoriaId, potreroNombre) => {
+    const cat = hacienda.find(h => h.id === categoriaId);
+    if (!cat || !cat.docId) return;
+    try {
+      await updateDoc(doc(db, 'hacienda', cat.docId), {
+        potrero: potreroNombre,
+        fecha_ingreso: potreroNombre ? new Date().toISOString() : null
+      });
+      setHacienda(prev => prev.map(h => h.id === categoriaId ? { ...h, potrero: potreroNombre } : h));
     } catch (error) {
       console.error('Error:', error);
     }
@@ -197,57 +212,103 @@ function App() {
         </div>
 
         <div style={{ flex: 1, backgroundColor: '#1a1a1a', borderLeft: '1px solid #333', overflow: 'auto', padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-          {selectedPotrero && (
-            <div style={{ backgroundColor: '#2a2a2a', padding: '1rem', borderRadius: '4px', border: '1px solid #c41e3a', position: 'relative' }}>
-              <h2 style={{ fontSize: '1.3rem', margin: '0 0 1rem 0', fontWeight: '600' }}>Potrero {selectedPotrero.nombre}</h2>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+
+          {/* Panel potrero seleccionado — drop target */}
+          {selectedPotrero ? (
+            <div
+              onDragOver={(e) => { e.preventDefault(); setDropOver(true); }}
+              onDragLeave={() => setDropOver(false)}
+              onDrop={() => {
+                if (draggedCategory) moverAPotrero(draggedCategory, selectedPotrero.nombre);
+                setDropOver(false);
+              }}
+              style={{ backgroundColor: dropOver ? '#1a3a1a' : '#2a2a2a', padding: '1rem', borderRadius: '4px', border: `2px solid ${dropOver ? '#4caf50' : '#c41e3a'}`, position: 'relative', transition: 'all 0.15s' }}
+            >
+              <h2 style={{ fontSize: '1.3rem', margin: '0 0 0.5rem 0', fontWeight: '600' }}>Potrero {selectedPotrero.nombre}</h2>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '0.75rem' }}>
                 <div>
-                  <span style={{ display: 'block', fontSize: '0.8rem', color: '#aaa', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '0.25rem' }}>Hectáreas</span>
-                  <span style={{ display: 'block', fontSize: '1.5rem', fontWeight: 'bold', color: '#ffeb3b' }}>{selectedPotrero.ha.toFixed(1)}</span>
+                  <span style={{ display: 'block', fontSize: '0.75rem', color: '#aaa', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '0.2rem' }}>Hectáreas</span>
+                  <span style={{ display: 'block', fontSize: '1.4rem', fontWeight: 'bold', color: '#ffeb3b' }}>{selectedPotrero.ha.toFixed(1)}</span>
                 </div>
                 <div>
-                  <span style={{ display: 'block', fontSize: '0.8rem', color: '#aaa', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '0.25rem' }}>Ocupación</span>
-                  <span style={{ display: 'block', fontSize: '1.5rem', fontWeight: 'bold', color: '#ffeb3b' }}>{hacienda.filter(h => h.potrero === selectedPotrero.nombre).length}</span>
+                  <span style={{ display: 'block', fontSize: '0.75rem', color: '#aaa', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '0.2rem' }}>Categorías</span>
+                  <span style={{ display: 'block', fontSize: '1.4rem', fontWeight: 'bold', color: '#ffeb3b' }}>{hacienda.filter(h => h.potrero === selectedPotrero.nombre).length}</span>
                 </div>
               </div>
+
+              {/* Categorías asignadas a este potrero */}
+              {hacienda.filter(h => h.potrero === selectedPotrero.nombre).length > 0 && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', marginTop: '0.5rem' }}>
+                  {hacienda.filter(h => h.potrero === selectedPotrero.nombre).map(cat => (
+                    <div key={cat.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.4rem 0.6rem', backgroundColor: '#1a1a1a', borderRadius: '3px', fontSize: '0.85rem' }}>
+                      <span>{cat.nombre} — <strong>{cat.cantidad}</strong> cab.</span>
+                      <button
+                        onClick={() => moverAPotrero(cat.id, null)}
+                        title="Desasignar"
+                        style={{ background: 'none', border: 'none', color: '#aaa', cursor: 'pointer', fontSize: '1rem', padding: '0 0.25rem' }}
+                      >✕</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {dropOver && (
+                <div style={{ marginTop: '0.75rem', textAlign: 'center', fontSize: '0.85rem', color: '#4caf50' }}>
+                  Soltá para asignar al Potrero {selectedPotrero.nombre}
+                </div>
+              )}
+              {!dropOver && hacienda.filter(h => h.potrero === selectedPotrero.nombre).length === 0 && (
+                <div style={{ marginTop: '0.5rem', textAlign: 'center', fontSize: '0.8rem', color: '#555', borderTop: '1px dashed #333', paddingTop: '0.5rem' }}>
+                  Arrastrá hacienda acá para asignar
+                </div>
+              )}
+
               <button onClick={() => setSelectedPotrero(null)} style={{ position: 'absolute', top: '0.75rem', right: '0.75rem', background: 'none', border: 'none', color: '#aaa', fontSize: '1.2rem', cursor: 'pointer', padding: '0.25rem 0.5rem' }}>✕</button>
+            </div>
+          ) : (
+            <div style={{ padding: '1rem', backgroundColor: '#2a2a2a', borderRadius: '4px', border: '1px dashed #444', textAlign: 'center', fontSize: '0.85rem', color: '#555' }}>
+              Hacé clic en un potrero del mapa para seleccionarlo
             </div>
           )}
 
+          {/* Lista de hacienda */}
           <div style={{ flex: 1 }}>
-            <h3 style={{ fontSize: '1.1rem', fontWeight: '600', margin: '0 0 1rem 0', textTransform: 'uppercase', letterSpacing: '0.5px', borderBottom: '1px solid #333', paddingBottom: '0.75rem' }}>
-              Hacienda (arrastrá para mover)
+            <h3 style={{ fontSize: '1rem', fontWeight: '600', margin: '0 0 0.75rem 0', textTransform: 'uppercase', letterSpacing: '0.5px', borderBottom: '1px solid #333', paddingBottom: '0.6rem' }}>
+              Hacienda {draggedCategory ? '— arrastrando...' : '— arrastrá al potrero'}
             </h3>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', maxHeight: '300px', overflowY: 'auto' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
               {hacienda.filter(h => h.cantidad > 0).map((cat) => (
                 <div
                   key={cat.id}
                   draggable
                   onDragStart={() => setDraggedCategory(cat.id)}
-                  onDragEnd={() => setDraggedCategory(null)}
-                  style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.75rem', backgroundColor: draggedCategory === cat.id ? '#3a3a3a' : '#2a2a2a', borderRadius: '3px', borderLeft: '3px solid #c41e3a', fontSize: '0.9rem', cursor: 'move' }}
+                  onDragEnd={() => { setDraggedCategory(null); setDropOver(false); }}
+                  style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.65rem 0.75rem', backgroundColor: draggedCategory === cat.id ? '#3a3a3a' : '#2a2a2a', borderRadius: '3px', borderLeft: `3px solid ${cat.potrero ? '#4caf50' : '#c41e3a'}`, fontSize: '0.9rem', cursor: 'grab', opacity: draggedCategory === cat.id ? 0.6 : 1 }}
                 >
                   <div>
-                    <span style={{ display: 'block', fontWeight: '600', marginBottom: '0.25rem' }}>{cat.nombre}</span>
-                    <span style={{ display: 'block', fontSize: '0.8rem', color: '#aaa' }}>{cat.potrero ? `Potrero ${cat.potrero}` : 'Sin asignar'}</span>
+                    <span style={{ display: 'block', fontWeight: '600', marginBottom: '0.15rem' }}>{cat.nombre}</span>
+                    <span style={{ display: 'block', fontSize: '0.78rem', color: cat.potrero ? '#4caf50' : '#777' }}>
+                      {cat.potrero ? `Potrero ${cat.potrero}` : 'Sin asignar'}
+                    </span>
                   </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', textAlign: 'right' }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
                     <span style={{ fontSize: '1.2rem', fontWeight: 'bold', color: '#fff' }}>{cat.cantidad}</span>
-                    <span style={{ fontSize: '0.8rem', color: '#aaa' }}>{cat.peso_promedio} kg</span>
+                    <span style={{ fontSize: '0.78rem', color: '#777' }}>{cat.peso_promedio} kg</span>
                   </div>
                 </div>
               ))}
             </div>
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-            <div style={{ display: 'flex', flexDirection: 'column', padding: '1rem', backgroundColor: '#2a2a2a', borderRadius: '3px', border: '1px solid #333' }}>
-              <span style={{ fontSize: '0.8rem', color: '#aaa', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '0.5rem' }}>Total animales</span>
-              <span style={{ fontSize: '2rem', fontWeight: 'bold', color: '#ffeb3b' }}>{totalAnimales}</span>
+          {/* Métricas */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', padding: '0.85rem', backgroundColor: '#2a2a2a', borderRadius: '3px', border: '1px solid #333' }}>
+              <span style={{ fontSize: '0.75rem', color: '#aaa', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '0.4rem' }}>Total animales</span>
+              <span style={{ fontSize: '1.8rem', fontWeight: 'bold', color: '#ffeb3b' }}>{totalAnimales}</span>
             </div>
-            <div style={{ display: 'flex', flexDirection: 'column', padding: '1rem', backgroundColor: '#2a2a2a', borderRadius: '3px', border: '1px solid #333' }}>
-              <span style={{ fontSize: '0.8rem', color: '#aaa', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '0.5rem' }}>Ocupación</span>
-              <span style={{ fontSize: '2rem', fontWeight: 'bold', color: '#ffeb3b' }}>{postrerosOcupados}/16</span>
+            <div style={{ display: 'flex', flexDirection: 'column', padding: '0.85rem', backgroundColor: '#2a2a2a', borderRadius: '3px', border: '1px solid #333' }}>
+              <span style={{ fontSize: '0.75rem', color: '#aaa', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '0.4rem' }}>Asignados</span>
+              <span style={{ fontSize: '1.8rem', fontWeight: 'bold', color: '#ffeb3b' }}>{hacienda.filter(h => h.potrero).length}/{hacienda.length}</span>
             </div>
           </div>
         </div>
