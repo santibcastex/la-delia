@@ -108,6 +108,7 @@ function App() {
   const [selectedPotrero, setSelectedPotrero] = useState(null);
   const [draggedCategory, setDraggedCategory] = useState(null);
   const [dropOver, setDropOver] = useState(false);
+  const [showPlanilla, setShowPlanilla] = useState(false);
 
   useEffect(() => {
     getRedirectResult(auth).catch(() => {});
@@ -236,6 +237,9 @@ function App() {
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
           <span style={{ fontSize: '0.9rem', color: '#aaa' }}>{user.displayName || user.email}</span>
+          <button onClick={() => setShowPlanilla(v => !v)} style={{ padding: '0.5rem 1rem', backgroundColor: showPlanilla ? '#ffeb3b' : '#2a2a2a', color: showPlanilla ? '#000' : '#fff', border: '1px solid #444', borderRadius: '3px', cursor: 'pointer', fontSize: '0.85rem', fontWeight: '600' }}>
+            {showPlanilla ? '▲ Ocultar planilla' : '▼ Ver planilla'}
+          </button>
           <button onClick={handleSignOut} style={{ padding: '0.5rem 1rem', backgroundColor: '#c41e3a', color: '#fff', border: 'none', borderRadius: '3px', cursor: 'pointer', fontSize: '0.85rem', fontWeight: '600' }}>
             Cerrar sesión
           </button>
@@ -243,7 +247,7 @@ function App() {
       </header>
 
       <div style={{ display: 'flex', flex: 1, flexDirection: 'column', overflow: 'hidden' }}>
-      <div style={{ display: 'flex', flex: '0 0 60%', gap: '1px', overflow: 'hidden' }}>
+      <div style={{ display: 'flex', flex: showPlanilla ? '0 0 60%' : '1', gap: '1px', overflow: 'hidden' }}>
         <div style={{ flex: 2, position: 'relative' }}>
           <MapView onPotreroClick={setSelectedPotrero} />
         </div>
@@ -352,7 +356,7 @@ function App() {
       </div>
 
       {/* Planilla de potreros */}
-      <div style={{ flex: '0 0 40%', borderTop: '1px solid #333', overflow: 'auto', backgroundColor: '#111' }}>
+      {showPlanilla && <div style={{ flex: '0 0 40%', borderTop: '1px solid #333', overflow: 'auto', backgroundColor: '#111' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem' }}>
           <thead>
             <tr style={{ backgroundColor: '#1a1a1a', position: 'sticky', top: 0, zIndex: 1 }}>
@@ -390,7 +394,7 @@ function App() {
             ))}
           </tbody>
         </table>
-      </div>
+      </div>}
 
       </div>
     </div>
