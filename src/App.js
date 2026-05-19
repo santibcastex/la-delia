@@ -1,10 +1,30 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { initializeApp } from 'firebase/app';
 import { getFirestore, collection, getDocs, addDoc, updateDoc, doc, setDoc } from 'firebase/firestore';
 import { getAuth, signOut, onAuthStateChanged, GoogleAuthProvider, signInWithRedirect, getRedirectResult } from 'firebase/auth';
 import './App.css';
+
+const CDSE_INSTANCE_ID = '54afbc0c-becd-4db7-85f8-041c93af8475';
+const CDSE_WMS_URL = `https://sh.dataspace.copernicus.eu/ogc/wms/${CDSE_INSTANCE_ID}`;
+const CDSE_TOKEN_URL = 'https://identity.dataspace.copernicus.eu/auth/realms/CDSE/protocol/openid-connect/token';
+
+const getNdviDates = () => {
+  const dates = [];
+  const today = new Date();
+  const todayStr = today.toISOString().slice(0, 10);
+  for (let m = 0; m < 8; m++) {
+    const d = new Date(today.getFullYear(), today.getMonth() - m, 1);
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    ['21', '11', '01'].forEach(day => {
+      const dateStr = `${year}-${month}-${day}`;
+      if (dateStr <= todayStr) dates.push(dateStr);
+    });
+  }
+  return dates;
+};
 
 const firebaseConfig = {
   apiKey: "AIzaSyAmS8djT1pwnEOjcWTljmh5KDgAOnTi8so",
@@ -57,13 +77,38 @@ const STYLE_NORMAL  = { color: '#c41e3a', weight: 2, opacity: 0.9, fillColor: '#
 const STYLE_ORIGEN  = { color: '#ff9800', weight: 3, opacity: 1,   fillColor: '#ff9800', fillOpacity: 0.5 };
 const STYLE_DESTINO = { color: '#4caf50', weight: 2, opacity: 0.9, fillColor: '#4caf50', fillOpacity: 0.45 };
 
-function MapView({ onPotreroClick, modoMover }) {
+function MapView({ onPotreroClick, modoMover, ndviActive, ndviToken, ndviDate }) {
   const mapContainer = useRef(null);
   const map = useRef(null);
-  const layersRef = useRef({});       // { [nombre]: [polygon, ...] }
+  const layersRef = useRef({});
+  const ndviLayerRef = useRef(null);
   const onClickRef = useRef(onPotreroClick);
 
   useEffect(() => { onClickRef.current = onPotreroClick; }, [onPotreroClick]);
+
+  // Capa NDVI — agregar/quitar según config
+  useEffect(() => {
+    if (!map.current) return;
+    if (ndviLayerRef.current) {
+      map.current.removeLayer(ndviLayerRef.current);
+      ndviLayerRef.current = null;
+    }
+    if (ndviActive && ndviToken && ndviDate) {
+      ndviLayerRef.current = L.tileLayer.wms(
+        `${CDSE_WMS_URL}?access_token=${ndviToken}`,
+        {
+          layers: 'NDVI',
+          format: 'image/png',
+          transparent: true,
+          version: '1.3.0',
+          time: ndviDate,
+          opacity: 0.82,
+          attribution: 'NDVI © Copernicus Data Space'
+        }
+      );
+      ndviLayerRef.current.addTo(map.current);
+    }
+  }, [ndviActive, ndviToken, ndviDate]);
 
   // Actualizar estilos cuando cambia modoMover
   useEffect(() => {
@@ -131,7 +176,12 @@ function App() {
   const [draggedCategory, setDraggedCategory] = useState(null);
   const [dropOver, setDropOver] = useState(false);
   const [showPlanilla, setShowPlanilla] = useState(false);
-  const [modoMover, setModoMover] = useState(null); // nombre del potrero origen
+  const [modoMover, setModoMover] = useState(null);
+  const [showNDVI, setShowNDVI] = useState(false);
+  const [ndviDate, setNdviDate] = useState(getNdviDates()[0] || '');
+  const [cdseToken, setCdseToken] = useState(null);
+  const tokenTimerRef = useRef(null);
+  const NDVI_DATES = getNdviDates();
 
   useEffect(() => {
     getRedirectResult(auth).catch(() => {});
@@ -187,6 +237,31 @@ function App() {
       console.error('Error:', error);
     }
   };
+
+  const fetchCDSEToken = useCallback(async () => {
+    try {
+      const res = await fetch(CDSE_TOKEN_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          grant_type: 'client_credentials',
+          client_id: process.env.REACT_APP_CDSE_CLIENT_ID || '',
+          client_secret: process.env.REACT_APP_CDSE_CLIENT_SECRET || ''
+        })
+      });
+      const data = await res.json();
+      if (data.access_token) {
+        setCdseToken(data.access_token);
+        clearTimeout(tokenTimerRef.current);
+        tokenTimerRef.current = setTimeout(fetchCDSEToken, (data.expires_in - 60) * 1000);
+      }
+    } catch (err) { console.error('CDSE token error:', err); }
+  }, []);
+
+  useEffect(() => {
+    if (showNDVI && !cdseToken) fetchCDSEToken();
+    return () => { if (!showNDVI) clearTimeout(tokenTimerRef.current); };
+  }, [showNDVI, cdseToken, fetchCDSEToken]);
 
   const moverTodoAPotrero = async (origen, destino) => {
     if (origen === destino) { setModoMover(null); return; }
@@ -289,6 +364,9 @@ function App() {
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
           <span style={{ fontSize: '0.9rem', color: '#aaa' }}>{user.displayName || user.email}</span>
+          <button onClick={() => setShowNDVI(v => !v)} style={{ padding: '0.5rem 1rem', backgroundColor: showNDVI ? '#4caf50' : '#2a2a2a', color: showNDVI ? '#000' : '#fff', border: '1px solid #444', borderRadius: '3px', cursor: 'pointer', fontSize: '0.85rem', fontWeight: '600' }}>
+            🌿 {showNDVI ? 'NDVI ON' : 'NDVI'}
+          </button>
           <button onClick={() => setShowPlanilla(v => !v)} style={{ padding: '0.5rem 1rem', backgroundColor: showPlanilla ? '#ffeb3b' : '#2a2a2a', color: showPlanilla ? '#000' : '#fff', border: '1px solid #444', borderRadius: '3px', cursor: 'pointer', fontSize: '0.85rem', fontWeight: '600' }}>
             {showPlanilla ? '▲ Ocultar planilla' : '▼ Ver planilla'}
           </button>
@@ -301,7 +379,32 @@ function App() {
       <div style={{ display: 'flex', flex: 1, flexDirection: 'column', overflow: 'hidden' }}>
       <div style={{ display: 'flex', flex: showPlanilla ? '0 0 60%' : '1', gap: '1px', overflow: 'hidden' }}>
         <div style={{ flex: 2, position: 'relative' }}>
-          <MapView onPotreroClick={handlePotreroClick} modoMover={modoMover} />
+          <MapView onPotreroClick={handlePotreroClick} modoMover={modoMover} ndviActive={showNDVI} ndviToken={cdseToken} ndviDate={ndviDate} />
+          {/* Panel control NDVI */}
+          {showNDVI && (
+            <div style={{ position: 'absolute', bottom: '1.5rem', left: '1rem', zIndex: 1000, backgroundColor: 'rgba(0,0,0,0.82)', borderRadius: '6px', padding: '0.75rem 1rem', color: '#fff', fontSize: '0.82rem', minWidth: '200px' }}>
+              <div style={{ fontWeight: '700', marginBottom: '0.5rem', color: '#4caf50' }}>🌿 NDVI — {cdseToken ? 'activo' : 'conectando...'}</div>
+              <label style={{ display: 'block', color: '#aaa', marginBottom: '0.25rem', fontSize: '0.75rem' }}>Fecha (10 días)</label>
+              <select
+                value={ndviDate}
+                onChange={e => setNdviDate(e.target.value)}
+                style={{ width: '100%', backgroundColor: '#1a1a1a', color: '#fff', border: '1px solid #444', borderRadius: '3px', padding: '0.3rem', fontSize: '0.82rem', marginBottom: '0.6rem' }}
+              >
+                {NDVI_DATES.map(d => <option key={d} value={d}>{d}</option>)}
+              </select>
+              {/* Leyenda */}
+              <div style={{ fontSize: '0.72rem', color: '#aaa', marginBottom: '0.25rem' }}>Índice NDVI</div>
+              <div style={{ display: 'flex', height: '10px', borderRadius: '3px', overflow: 'hidden', marginBottom: '0.3rem' }}>
+                {['#7b2a2a','#c0392b','#e67e22','#f1c40f','#a8d08d','#4caf50','#1a6b1a'].map((c,i) => (
+                  <div key={i} style={{ flex: 1, backgroundColor: c }} />
+                ))}
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.68rem', color: '#888' }}>
+                <span>-1 suelo</span><span>0</span><span>1 pasturas</span>
+              </div>
+            </div>
+          )}
+
           {modoMover && (
             <div style={{ position: 'absolute', top: '1rem', left: '50%', transform: 'translateX(-50%)', backgroundColor: '#4caf50', color: '#000', padding: '0.6rem 1.5rem', borderRadius: '4px', fontWeight: '700', fontSize: '0.9rem', zIndex: 1000, boxShadow: '0 2px 12px rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', gap: '1rem' }}>
               Seleccioná el potrero destino en el mapa
