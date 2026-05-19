@@ -193,7 +193,7 @@ function App() {
   const [modoMover, setModoMover] = useState(null);
   const [showNDVI, setShowNDVI] = useState(false);
   const [ndviDate, setNdviDate] = useState(getNdviDates()[0] || '');
-  const [ndviIndex, setNdviIndex] = useState('NDVI');
+  const [ndviIndex, setNdviIndex] = useState('NDVIc');
   const [showBasemap, setShowBasemap] = useState(true);
   const NDVI_DATES = getNdviDates();
 
@@ -392,50 +392,66 @@ function App() {
           <MapView onPotreroClick={handlePotreroClick} modoMover={modoMover} ndviActive={showNDVI} ndviDate={ndviDate} ndviIndex={ndviIndex} showBasemap={showBasemap} />
           {/* Panel control NDVI */}
           {showNDVI && (
-            <div style={{ position: 'absolute', bottom: '1.5rem', left: '1rem', zIndex: 1000, backgroundColor: 'rgba(0,0,0,0.85)', borderRadius: '6px', padding: '0.75rem 1rem', color: '#fff', fontSize: '0.82rem', minWidth: '210px' }}>
-              <div style={{ fontWeight: '700', marginBottom: '0.6rem', color: '#4caf50' }}>
-                🌿 {ndviIndex} — activo (Sentinel-2)
+            <div style={{ position: 'absolute', bottom: '1.5rem', left: '1rem', zIndex: 1000, backgroundColor: 'rgba(15,15,15,0.92)', borderRadius: '8px', padding: '0.85rem 1rem', color: '#fff', fontSize: '0.82rem', minWidth: '230px', boxShadow: '0 4px 20px rgba(0,0,0,0.5)' }}>
+              {/* Navegación de fecha */}
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.7rem' }}>
+                <button onClick={() => { const i = NDVI_DATES.indexOf(ndviDate); if (i < NDVI_DATES.length-1) setNdviDate(NDVI_DATES[i+1]); }}
+                  style={{ background: 'none', border: 'none', color: '#aaa', fontSize: '1.1rem', cursor: 'pointer', padding: '0 0.3rem' }}>‹</button>
+                <span style={{ fontWeight: '600', fontSize: '0.83rem' }}>{ndviDate}</span>
+                <button onClick={() => { const i = NDVI_DATES.indexOf(ndviDate); if (i > 0) setNdviDate(NDVI_DATES[i-1]); }}
+                  style={{ background: 'none', border: 'none', color: '#aaa', fontSize: '1.1rem', cursor: 'pointer', padding: '0 0.3rem' }}>›</button>
               </div>
-              {/* Selector de índice */}
-              <div style={{ display: 'flex', gap: '0.3rem', marginBottom: '0.7rem' }}>
+              {/* Selector de índice — fila 1 */}
+              <div style={{ display: 'flex', gap: '0.25rem', marginBottom: '0.25rem' }}>
                 {[
-                  { id: 'NDVI', label: 'NDVI', tip: 'General' },
-                  { id: 'EVI',  label: 'EVI',  tip: 'Pasturas densas' },
-                  { id: 'NDRE', label: 'NDRE', tip: 'Clorofila / estrés' },
+                  { id: 'NDVIc', label: 'NDVI+', tip: 'NDVI contrastado' },
+                  { id: 'NDVI',  label: 'NDVI',  tip: 'NDVI estándar' },
+                  { id: 'EVI',   label: 'EVI',   tip: 'Vegetación densa' },
+                  { id: 'NDRE',  label: 'NDRE',  tip: 'Clorofila / estrés' },
                 ].map(({ id, label, tip }) => (
                   <button key={id} onClick={() => setNdviIndex(id)} title={tip} style={{
-                    flex: 1, padding: '0.25rem 0', fontSize: '0.75rem', fontWeight: '700',
+                    flex: 1, padding: '0.22rem 0', fontSize: '0.7rem', fontWeight: '700',
                     border: '1px solid', borderRadius: '3px', cursor: 'pointer',
-                    backgroundColor: ndviIndex === id ? '#4caf50' : '#1a1a1a',
-                    color: ndviIndex === id ? '#000' : '#aaa',
-                    borderColor: ndviIndex === id ? '#4caf50' : '#444',
+                    backgroundColor: ndviIndex === id ? '#4caf50' : '#222',
+                    color: ndviIndex === id ? '#000' : '#999',
+                    borderColor: ndviIndex === id ? '#4caf50' : '#3a3a3a',
                   }}>{label}</button>
                 ))}
               </div>
+              {/* Selector de índice — fila 2 */}
+              <div style={{ display: 'flex', gap: '0.25rem', marginBottom: '0.7rem' }}>
+                {[
+                  { id: 'MSAVI', label: 'MSAVI', tip: 'Vegetación escasa / suelo' },
+                  { id: 'RECI',  label: 'RECI',  tip: 'Clorofila red-edge' },
+                  { id: 'NDMI',  label: 'NDMI',  tip: 'Humedad vegetación' },
+                  { id: 'NDWI',  label: 'NDWW',  tip: 'Agua libre' },
+                ].map(({ id, label, tip }) => (
+                  <button key={id} onClick={() => setNdviIndex(id)} title={tip} style={{
+                    flex: 1, padding: '0.22rem 0', fontSize: '0.7rem', fontWeight: '700',
+                    border: '1px solid', borderRadius: '3px', cursor: 'pointer',
+                    backgroundColor: ndviIndex === id ? '#4caf50' : '#222',
+                    color: ndviIndex === id ? '#000' : '#999',
+                    borderColor: ndviIndex === id ? '#4caf50' : '#3a3a3a',
+                  }}>{label}</button>
+                ))}
+              </div>
+              {/* Toggle mapa base */}
               <button onClick={() => setShowBasemap(v => !v)} style={{
-                width: '100%', padding: '0.25rem', fontSize: '0.75rem', marginBottom: '0.7rem',
-                backgroundColor: showBasemap ? '#2a2a2a' : '#1a3a1a', color: showBasemap ? '#aaa' : '#4caf50',
-                border: '1px solid', borderColor: showBasemap ? '#444' : '#4caf50',
+                width: '100%', padding: '0.25rem', fontSize: '0.72rem', marginBottom: '0.6rem',
+                backgroundColor: showBasemap ? '#222' : '#1a3a1a', color: showBasemap ? '#888' : '#4caf50',
+                border: '1px solid', borderColor: showBasemap ? '#3a3a3a' : '#4caf50',
                 borderRadius: '3px', cursor: 'pointer'
               }}>
-                {showBasemap ? '🛰 Ocultar mapa satelital' : '🛰 Mostrar mapa satelital'}
+                {showBasemap ? '🛰 Ocultar satélite' : '🛰 Mostrar satélite'}
               </button>
-              <label style={{ display: 'block', color: '#aaa', marginBottom: '0.25rem', fontSize: '0.75rem' }}>Fecha imagen</label>
-              <select
-                value={ndviDate}
-                onChange={e => setNdviDate(e.target.value)}
-                style={{ width: '100%', backgroundColor: '#1a1a1a', color: '#fff', border: '1px solid #444', borderRadius: '3px', padding: '0.3rem', fontSize: '0.82rem', marginBottom: '0.6rem' }}
-              >
-                {NDVI_DATES.map(d => <option key={d} value={d}>{d}</option>)}
-              </select>
-              {/* Leyenda */}
-              <div style={{ display: 'flex', height: '8px', borderRadius: '3px', overflow: 'hidden', marginBottom: '0.3rem' }}>
-                {['#6e3710','#c37328','#e1cd2d','#91c332','#419f23','#196410'].map((c,i) => (
+              {/* Leyenda arcoíris */}
+              <div style={{ display: 'flex', height: '7px', borderRadius: '3px', overflow: 'hidden', marginBottom: '0.25rem' }}>
+                {['#82005a','#d2001e','#f03c00','#ff8c00','#f0d700','#afe600','#50c800','#009b14','#006432'].map((c,i) => (
                   <div key={i} style={{ flex: 1, backgroundColor: c }} />
                 ))}
               </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.68rem', color: '#888' }}>
-                <span>suelo</span><span>escaso</span><span>bueno</span><span>excelente</span>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.65rem', color: '#666' }}>
+                <span>bajo</span><span>medio</span><span>alto</span>
               </div>
             </div>
           )}
