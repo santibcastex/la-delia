@@ -1,6 +1,6 @@
 {
   "functions": {
-    "api/forraje-ndvi.js": { "maxDuration": 60 },
+    "api/forraje-ndvi.js": { "maxDuration": 60 }
     "api/forraje-radiation.js": { "maxDuration": 15 },
     "api/ndvi-farm.js": { "maxDuration": 15 },
     "api/ndvi-stats.js": { "maxDuration": 30 },
