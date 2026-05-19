@@ -105,6 +105,19 @@ const EVALSCRIPTS = {
     [-0.30, -0.15, 0.00, 0.10, 0.20, 0.35],
     MOISTURE
   ),
+
+  // NATURAL — imagen true color (B04=rojo, B03=verde, B02=azul)
+  NATURAL: `//VERSION=3
+function setup(){return{input:[{bands:["B04","B03","B02","dataMask"]}],output:{bands:4,sampleType:"UINT8"}}}
+function evaluatePixel(s){
+  if(!s.dataMask)return[0,0,0,0];
+  return[
+    Math.min(255,Math.round(s.B04*3.5*255)),
+    Math.min(255,Math.round(s.B03*3.5*255)),
+    Math.min(255,Math.round(s.B02*3.5*255)),
+    255
+  ];
+}`,
 };
 
 async function getToken() {

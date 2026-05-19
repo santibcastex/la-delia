@@ -76,49 +76,36 @@ const STYLE_ORIGEN  = { color: '#ff9800', weight: 3, opacity: 1,   fillColor: '#
 const STYLE_DESTINO = { color: '#4caf50', weight: 2, opacity: 0.9, fillColor: '#4caf50', fillOpacity: 0.45 };
 
 // Coordenadas de los potreros aplanadas para la máscara NDVI (rings de cada MultiPolygon)
-const MASK_RINGS = POSTREROS_GEOJSON.features.flatMap(f =>
-  f.geometry.coordinates.flatMap(poly =>
-    poly.map(ring => ring.map(([lng, lat]) => [lat, lng]))
-  )
-);
 
-function MapView({ onPotreroClick, modoMover, ndviActive, ndviDate, ndviIndex, showBasemap }) {
+function MapView({ onPotreroClick, modoMover, ndviActive, ndviDate, ndviIndex, showBasemap, onHoverValue }) {
   const mapContainer = useRef(null);
   const map = useRef(null);
   const layersRef = useRef({});
   const labelsRef = useRef([]);
   const ndviLayerRef = useRef(null);
-  const maskLayerRef = useRef(null);
   const baseTileRef = useRef(null);
   const onClickRef = useRef(onPotreroClick);
   const ndviActiveRef = useRef(ndviActive);
+  const hoverTimerRef = useRef(null);
 
   useEffect(() => { onClickRef.current = onPotreroClick; }, [onPotreroClick]);
   useEffect(() => { ndviActiveRef.current = ndviActive; }, [ndviActive]);
 
-  // Capa NDVI + máscara fuera del campo
+  // Farm bounds para imageOverlay (calculados del GeoJSON)
+  const FARM_BOUNDS = [[-36.9290, -58.6160], [-36.8775, -58.5480]];
+
+  // Imagen del campo completo clipeada al perímetro exacto (una imagen = sin máscara)
   useEffect(() => {
     if (!map.current) return;
     if (ndviLayerRef.current) { map.current.removeLayer(ndviLayerRef.current); ndviLayerRef.current = null; }
-    if (maskLayerRef.current) { map.current.removeLayer(maskLayerRef.current); maskLayerRef.current = null; }
 
     if (ndviActive && ndviDate) {
-      const timeRange = `${ndviDate}T00:00:00Z/${ndviDate}T23:59:59Z`;
-      ndviLayerRef.current = L.tileLayer.wms('/api/ndvi-tile', {
-        layers: 'NDVI', format: 'image/png', transparent: true,
-        version: '1.3.0', time: timeRange, index: ndviIndex || 'NDVI', opacity: 0.88,
-        attribution: 'Sentinel-2 © Copernicus'
-      });
-      ndviLayerRef.current.on('tileerror', (e) => console.error('NDVI tile error:', e.tile.src));
-      ndviLayerRef.current.addTo(map.current);
-
-      // Máscara: polígono grande con huecos en cada potrero
-      const worldRing = [[-90, -180], [-90, 180], [90, 180], [90, -180]];
-      maskLayerRef.current = L.polygon([worldRing, ...MASK_RINGS], {
-        color: 'none', fillColor: '#0a0a0a', fillOpacity: 0.72, interactive: false
+      const url = `/api/ndvi-farm?index=${encodeURIComponent(ndviIndex)}&date=${ndviDate}`;
+      ndviLayerRef.current = L.imageOverlay(url, FARM_BOUNDS, {
+        opacity: 0.9, attribution: 'Sentinel-2 © Copernicus', interactive: false
       }).addTo(map.current);
     }
-  }, [ndviActive, ndviDate, ndviIndex]);
+  }, [ndviActive, ndviDate, ndviIndex]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Mostrar/ocultar mapa base satelital
   useEffect(() => {
@@ -195,6 +182,32 @@ function MapView({ onPotreroClick, modoMover, ndviActive, ndviDate, ndviIndex, s
       labelsRef.current.push(label);
     });
 
+    // Hover value: mousemove debounced 600ms
+    map.current.on('mousemove', (e) => {
+      if (!ndviActiveRef.current) return;
+      clearTimeout(hoverTimerRef.current);
+      hoverTimerRef.current = setTimeout(async () => {
+        if (!ndviActiveRef.current) return;
+        // get current index/date from the overlay URL
+        const overlay = ndviLayerRef.current;
+        if (!overlay) return;
+        const src = overlay._url || '';
+        const idxMatch = src.match(/index=([^&]+)/);
+        const dateMatch = src.match(/date=([^&]+)/);
+        const idx = idxMatch ? decodeURIComponent(idxMatch[1]) : 'NDVIc';
+        const date = dateMatch ? dateMatch[1] : '';
+        try {
+          const r = await fetch(`/api/ndvi-value?lat=${e.latlng.lat}&lon=${e.latlng.lng}&index=${idx}&date=${date}`);
+          const d = await r.json();
+          if (onHoverValue) onHoverValue(d);
+        } catch (_) {}
+      }, 600);
+    });
+    map.current.on('mouseout', () => {
+      clearTimeout(hoverTimerRef.current);
+      if (onHoverValue) onHoverValue(null);
+    });
+
     return () => { map.current.remove(); map.current = null; };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -216,6 +229,7 @@ function App() {
   const [ndviDate, setNdviDate] = useState(getNdviDates()[0] || '');
   const [ndviIndex, setNdviIndex] = useState('NDVIc');
   const [showBasemap, setShowBasemap] = useState(true);
+  const [hoverValue, setHoverValue] = useState(null);
   const NDVI_DATES = getNdviDates();
 
   useEffect(() => {
@@ -410,7 +424,7 @@ function App() {
       <div style={{ display: 'flex', flex: 1, flexDirection: 'column', overflow: 'hidden' }}>
       <div style={{ display: 'flex', flex: showPlanilla ? '0 0 60%' : '1', gap: '1px', overflow: 'hidden' }}>
         <div style={{ flex: 2, position: 'relative' }}>
-          <MapView onPotreroClick={handlePotreroClick} modoMover={modoMover} ndviActive={showNDVI} ndviDate={ndviDate} ndviIndex={ndviIndex} showBasemap={showBasemap} />
+          <MapView onPotreroClick={handlePotreroClick} modoMover={modoMover} ndviActive={showNDVI} ndviDate={ndviDate} ndviIndex={ndviIndex} showBasemap={showBasemap} onHoverValue={setHoverValue} />
           {/* Panel control NDVI */}
           {showNDVI && (
             <div style={{ position: 'absolute', bottom: '1.5rem', left: '1rem', zIndex: 1000, backgroundColor: 'rgba(15,15,15,0.92)', borderRadius: '8px', padding: '0.85rem 1rem', color: '#fff', fontSize: '0.82rem', minWidth: '230px', boxShadow: '0 4px 20px rgba(0,0,0,0.5)' }}>
@@ -440,12 +454,12 @@ function App() {
                 ))}
               </div>
               {/* Selector de índice — fila 2 */}
-              <div style={{ display: 'flex', gap: '0.25rem', marginBottom: '0.7rem' }}>
+              <div style={{ display: 'flex', gap: '0.25rem', marginBottom: '0.25rem' }}>
                 {[
-                  { id: 'MSAVI', label: 'MSAVI', tip: 'Vegetación escasa / suelo' },
-                  { id: 'RECI',  label: 'RECI',  tip: 'Clorofila red-edge' },
-                  { id: 'NDMI',  label: 'NDMI',  tip: 'Humedad vegetación' },
-                  { id: 'NDWI',  label: 'NDWW',  tip: 'Agua libre' },
+                  { id: 'MSAVI',   label: 'MSAVI',   tip: 'Vegetación escasa / suelo' },
+                  { id: 'RECI',    label: 'RECI',    tip: 'Clorofila red-edge' },
+                  { id: 'NDMI',    label: 'NDMI',    tip: 'Humedad vegetación' },
+                  { id: 'NDWI',    label: 'NDWI',    tip: 'Agua libre' },
                 ].map(({ id, label, tip }) => (
                   <button key={id} onClick={() => setNdviIndex(id)} title={tip} style={{
                     flex: 1, padding: '0.22rem 0', fontSize: '0.7rem', fontWeight: '700',
@@ -456,6 +470,25 @@ function App() {
                   }}>{label}</button>
                 ))}
               </div>
+              {/* Fila 3: imagen natural */}
+              <div style={{ display: 'flex', gap: '0.25rem', marginBottom: '0.7rem' }}>
+                {[{ id: 'NATURAL', label: '🛰 Imagen natural (color real)', tip: 'True color Sentinel-2' }].map(({ id, label, tip }) => (
+                  <button key={id} onClick={() => setNdviIndex(id)} title={tip} style={{
+                    flex: 1, padding: '0.22rem 0.4rem', fontSize: '0.7rem', fontWeight: '700',
+                    border: '1px solid', borderRadius: '3px', cursor: 'pointer',
+                    backgroundColor: ndviIndex === id ? '#4caf50' : '#222',
+                    color: ndviIndex === id ? '#000' : '#999',
+                    borderColor: ndviIndex === id ? '#4caf50' : '#3a3a3a',
+                  }}>{label}</button>
+                ))}
+              </div>
+              {/* Valor hover */}
+              {hoverValue && ndviIndex !== 'NATURAL' && (
+                <div style={{ marginBottom: '0.6rem', padding: '0.4rem 0.6rem', backgroundColor: '#1a1a1a', borderRadius: '4px', border: '1px solid #333' }}>
+                  <span style={{ color: '#4caf50', fontWeight: '700', fontSize: '0.85rem' }}>{ndviIndex}: {typeof hoverValue.value === 'number' ? hoverValue.value.toFixed(3) : '—'}</span>
+                  <span style={{ color: '#888', fontSize: '0.72rem', marginLeft: '0.5rem' }}>{hoverValue.label || ''}</span>
+                </div>
+              )}
               {/* Toggle mapa base */}
               <button onClick={() => setShowBasemap(v => !v)} style={{
                 width: '100%', padding: '0.25rem', fontSize: '0.72rem', marginBottom: '0.6rem',
