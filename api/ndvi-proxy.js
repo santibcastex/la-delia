@@ -1,5 +1,3 @@
-// Proxy para tiles WMS de Sentinel Hub — pasa el token via Authorization header
-// evitando problemas de CORS y de cómo Leaflet transforma los parámetros custom
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
 
@@ -16,12 +14,24 @@ export default async function handler(req, res) {
       headers: { Authorization: `Bearer ${token}` }
     });
 
-    const contentType = upstream.headers.get('content-type') || 'image/png';
+    const contentType = upstream.headers.get('content-type') || '';
+    const buffer = await upstream.arrayBuffer();
+
+    // Si Sentinel Hub devuelve XML/texto, es un error — lo exponemos como JSON
+    if (!contentType.includes('image/')) {
+      const text = Buffer.from(buffer).toString('utf-8');
+      console.error('NDVI WMS error response:', text.slice(0, 500));
+      return res.status(502).json({
+        error: 'WMS upstream error',
+        status: upstream.status,
+        contentType,
+        body: text.slice(0, 500)
+      });
+    }
+
     res.setHeader('Content-Type', contentType);
     res.setHeader('Cache-Control', 'public, max-age=3600');
-
-    const buffer = await upstream.arrayBuffer();
-    res.status(upstream.status).send(Buffer.from(buffer));
+    res.status(200).send(Buffer.from(buffer));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
