@@ -167,7 +167,6 @@ function App() {
   };
 
   const totalAnimales = hacienda.reduce((sum, h) => sum + (h.cantidad || 0), 0);
-  const postrerosOcupados = hacienda.filter(h => h.potrero).length;
 
   if (!authReady) {
     return (
