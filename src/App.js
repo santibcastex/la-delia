@@ -93,18 +93,27 @@ function MapView({ onPotreroClick, modoMover, ndviActive, ndviToken, ndviDate })
       ndviLayerRef.current = null;
     }
     if (ndviActive && ndviToken && ndviDate) {
+      // Sentinel Hub WMS necesita rango de fechas ISO 8601
+      const timeRange = `${ndviDate}T00:00:00Z/${ndviDate}T23:59:59Z`;
       ndviLayerRef.current = L.tileLayer.wms(
-        `${CDSE_WMS_URL}?access_token=${ndviToken}`,
+        CDSE_WMS_URL,
         {
           layers: 'NDVI',
           format: 'image/png',
           transparent: true,
           version: '1.3.0',
-          time: ndviDate,
+          time: timeRange,
+          maxcc: 100,
           opacity: 0.82,
-          attribution: 'NDVI © Copernicus Data Space'
+          attribution: 'NDVI © Copernicus Data Space',
+          // Token via header no es posible en Leaflet WMS estándar,
+          // usamos el parámetro URL de Sentinel Hub
+          access_token: ndviToken
         }
       );
+      ndviLayerRef.current.on('tileerror', (e) => {
+        console.error('NDVI tile error:', e.tile.src);
+      });
       ndviLayerRef.current.addTo(map.current);
     }
   }, [ndviActive, ndviToken, ndviDate]);
