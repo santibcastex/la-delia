@@ -81,12 +81,13 @@ const MASK_RINGS = POSTREROS_GEOJSON.features.flatMap(f =>
   )
 );
 
-function MapView({ onPotreroClick, modoMover, ndviActive, ndviDate, ndviIndex }) {
+function MapView({ onPotreroClick, modoMover, ndviActive, ndviDate, ndviIndex, showBasemap }) {
   const mapContainer = useRef(null);
   const map = useRef(null);
   const layersRef = useRef({});
   const ndviLayerRef = useRef(null);
   const maskLayerRef = useRef(null);
+  const baseTileRef = useRef(null);
   const onClickRef = useRef(onPotreroClick);
 
   useEffect(() => { onClickRef.current = onPotreroClick; }, [onPotreroClick]);
@@ -115,6 +116,12 @@ function MapView({ onPotreroClick, modoMover, ndviActive, ndviDate, ndviIndex })
     }
   }, [ndviActive, ndviDate, ndviIndex]);
 
+  // Mostrar/ocultar mapa base satelital
+  useEffect(() => {
+    if (!baseTileRef.current) return;
+    baseTileRef.current.setOpacity(showBasemap ? 1 : 0);
+  }, [showBasemap]);
+
   // Actualizar estilos cuando cambia modoMover
   useEffect(() => {
     Object.entries(layersRef.current).forEach(([nombre, polys]) => {
@@ -127,7 +134,7 @@ function MapView({ onPotreroClick, modoMover, ndviActive, ndviDate, ndviIndex })
 
   useEffect(() => {
     map.current = L.map(mapContainer.current).setView([-36.905, -58.607], 13);
-    L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+    baseTileRef.current = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
       attribution: 'Esri', maxZoom: 18
     }).addTo(map.current);
 
@@ -186,6 +193,7 @@ function App() {
   const [showNDVI, setShowNDVI] = useState(false);
   const [ndviDate, setNdviDate] = useState(getNdviDates()[0] || '');
   const [ndviIndex, setNdviIndex] = useState('NDVI');
+  const [showBasemap, setShowBasemap] = useState(true);
   const NDVI_DATES = getNdviDates();
 
   useEffect(() => {
@@ -380,7 +388,7 @@ function App() {
       <div style={{ display: 'flex', flex: 1, flexDirection: 'column', overflow: 'hidden' }}>
       <div style={{ display: 'flex', flex: showPlanilla ? '0 0 60%' : '1', gap: '1px', overflow: 'hidden' }}>
         <div style={{ flex: 2, position: 'relative' }}>
-          <MapView onPotreroClick={handlePotreroClick} modoMover={modoMover} ndviActive={showNDVI} ndviDate={ndviDate} ndviIndex={ndviIndex} />
+          <MapView onPotreroClick={handlePotreroClick} modoMover={modoMover} ndviActive={showNDVI} ndviDate={ndviDate} ndviIndex={ndviIndex} showBasemap={showBasemap} />
           {/* Panel control NDVI */}
           {showNDVI && (
             <div style={{ position: 'absolute', bottom: '1.5rem', left: '1rem', zIndex: 1000, backgroundColor: 'rgba(0,0,0,0.85)', borderRadius: '6px', padding: '0.75rem 1rem', color: '#fff', fontSize: '0.82rem', minWidth: '210px' }}>
@@ -403,6 +411,14 @@ function App() {
                   }}>{label}</button>
                 ))}
               </div>
+              <button onClick={() => setShowBasemap(v => !v)} style={{
+                width: '100%', padding: '0.25rem', fontSize: '0.75rem', marginBottom: '0.7rem',
+                backgroundColor: showBasemap ? '#2a2a2a' : '#1a3a1a', color: showBasemap ? '#aaa' : '#4caf50',
+                border: '1px solid', borderColor: showBasemap ? '#444' : '#4caf50',
+                borderRadius: '3px', cursor: 'pointer'
+              }}>
+                {showBasemap ? '🛰 Ocultar mapa satelital' : '🛰 Mostrar mapa satelital'}
+              </button>
               <label style={{ display: 'block', color: '#aaa', marginBottom: '0.25rem', fontSize: '0.75rem' }}>Fecha imagen</label>
               <select
                 value={ndviDate}
