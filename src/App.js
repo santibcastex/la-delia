@@ -230,18 +230,36 @@ function MsBarChart({ data, label = 'MS (kg/ha/mes)' }) {
   );
 }
 
-function ForrajePanel({ hacienda, historial, ndviStats, ndviDate }) {
+function ForrajePanel({ hacienda, historial }) {
   const [activeTab, setActiveTab] = useState('actual');
   const [radiation, setRadiation] = useState({});
+  const [ndviCurrent, setNdviCurrent] = useState({});   // current-date per-potrero NDVI
+  const [loadingCurrent, setLoadingCurrent] = useState(false);
   const [ndviHistory, setNdviHistory] = useState(null); // null = not yet loaded
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [efficiency, setEfficiency] = useState(50);
 
+  // Fetch radiation on mount
   useEffect(() => {
     fetch('/api/forraje-radiation?months=24')
       .then(r => r.json())
       .then(setRadiation)
       .catch(() => {});
+  }, []);
+
+  // Fetch current NDVI for all potreros on mount (independent of map)
+  useEffect(() => {
+    setLoadingCurrent(true);
+    const currentDate = getNdviDates()[0];
+    fetch('/api/ndvi-stats', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ points: potreroPoints(), index: 'NDVIc', date: currentDate })
+    })
+      .then(r => r.json())
+      .then(setNdviCurrent)
+      .catch(() => {})
+      .finally(() => setLoadingCurrent(false));
   }, []);
 
   useEffect(() => {
@@ -264,11 +282,11 @@ function ForrajePanel({ hacienda, historial, ndviStats, ndviDate }) {
   const currentMonth = new Date().getMonth();
   const currentRad = radiation[currentYM] ?? null;
 
-  // Estado Actual: use ndviStats (latest) + current month radiation
+  // Estado Actual: use own fetched ndviCurrent + current month radiation
   const estadoActual = POSTREROS_GEOJSON.features.map(f => {
     const nombre = f.properties.nombre;
     const ha = f.properties.ha;
-    const ndvi = ndviStats[nombre] ?? null;
+    const ndvi = ndviCurrent[nombre] ?? null;
     const msHa = ndvi != null && currentRad != null ? calcMS(ndvi, currentRad) : null;
     const msTotal = msHa != null ? msHa * ha : null;
     const msDisponible = msTotal != null ? msTotal * (efficiency / 100) : null;
@@ -294,7 +312,7 @@ function ForrajePanel({ hacienda, historial, ndviStats, ndviDate }) {
     if (ndviHistory && ndviHistory[ym]) {
       ndviVals = Object.values(ndviHistory[ym]).filter(v => v != null);
     } else if (ym === currentYM) {
-      ndviVals = Object.values(ndviStats).filter(v => v != null);
+      ndviVals = Object.values(ndviCurrent).filter(v => v != null);
     }
     const avgNdvi = ndviVals.length > 0 ? ndviVals.reduce((s, v) => s + v, 0) / ndviVals.length : null;
     const ms = avgNdvi != null && rad != null ? calcMS(avgNdvi, rad) : null;
@@ -326,8 +344,8 @@ function ForrajePanel({ hacienda, historial, ndviStats, ndviDate }) {
         let ndvi = null;
         if (ndviHistory && ndviHistory[ym] && ndviHistory[ym][nombre] != null) {
           ndvi = ndviHistory[ym][nombre];
-        } else if (ym === currentYM && ndviStats[nombre] != null) {
-          ndvi = ndviStats[nombre];
+        } else if (ym === currentYM && ndviCurrent[nombre] != null) {
+          ndvi = ndviCurrent[nombre];
         }
         if (ndvi != null && rad != null) {
           const msHa = calcMS(ndvi, rad);
@@ -375,14 +393,9 @@ function ForrajePanel({ hacienda, historial, ndviStats, ndviDate }) {
         {/* ── ESTADO ACTUAL ── */}
         {activeTab === 'actual' && (
           <div>
-            {currentRad == null && (
-              <div style={{ padding: '0.75rem', backgroundColor: '#1a1a0a', border: '1px solid #3a3a00', borderRadius: '4px', fontSize: '0.8rem', color: '#aaa', marginBottom: '1rem' }}>
-                Cargando radiación solar...
-              </div>
-            )}
-            {Object.keys(ndviStats).length === 0 && (
-              <div style={{ padding: '0.75rem', backgroundColor: '#1a1a0a', border: '1px solid #3a3a00', borderRadius: '4px', fontSize: '0.8rem', color: '#aaa', marginBottom: '1rem' }}>
-                Activá NDVI en el mapa para calcular MS por potrero
+            {(loadingCurrent || currentRad == null) && (
+              <div style={{ padding: '0.75rem', backgroundColor: '#0f1a0f', border: '1px solid #2a3a2a', borderRadius: '4px', fontSize: '0.8rem', color: '#888', marginBottom: '1rem' }}>
+                {loadingCurrent ? '⏳ Calculando NDVI por potrero...' : '⏳ Cargando radiación solar...'}
               </div>
             )}
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem' }}>
@@ -1071,8 +1084,6 @@ function App() {
             <ForrajePanel
               hacienda={hacienda}
               historial={historial}
-              ndviStats={ndviStats}
-              ndviDate={ndviDate}
             />
           )}
 
