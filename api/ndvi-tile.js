@@ -1,24 +1,59 @@
-// Genera tiles NDVI desde Sentinel-2 L2A via CDSE Process API
-// Recibe parámetros WMS estándar (BBOX, WIDTH, HEIGHT, TIME) desde Leaflet
+// Paleta compartida para pasturas pampeanas: suelo → seco → moderado → bueno → excelente
+// Los thresholds se ajustan por índice según su rango típico en esta región
+const PALETTE = [
+  [110, 55,  15, 220],  // suelo desnudo / muy degradado
+  [195, 115, 40, 220],  // muy escaso
+  [225, 205, 45, 220],  // escaso
+  [145, 195, 50, 220],  // moderado
+  [65,  155, 35, 220],  // bueno
+  [25,  100, 15, 220],  // excelente
+];
 
-const EVALSCRIPT = `//VERSION=3
-function setup() {
-  return {
-    input: [{ bands: ["B04", "B08", "dataMask"] }],
-    output: { bands: 4, sampleType: "UINT8" }
-  };
-}
-function evaluatePixel(s) {
-  if (!s.dataMask) return [0, 0, 0, 0];
-  const ndvi = (s.B08 - s.B04) / (s.B08 + s.B04 + 1e-10);
-  // Paleta: rojo (suelo/seco) → amarillo → verde (pasturas)
-  if (ndvi < 0.0)  return [139, 69,  19,  200];
-  if (ndvi < 0.15) return [220, 160,  60, 220];
-  if (ndvi < 0.25) return [210, 210,  50, 220];
-  if (ndvi < 0.35) return [150, 200,  50, 220];
-  if (ndvi < 0.50) return [ 80, 170,  40, 220];
-  return                   [ 30, 120,  20, 220];
-}`;
+const EVALSCRIPTS = {
+  // NDVI: (NIR-Red)/(NIR+Red) — índice general, rango -1 a 1
+  NDVI: `//VERSION=3
+function setup(){return{input:[{bands:["B04","B08","dataMask"]}],output:{bands:4,sampleType:"UINT8"}}}
+function evaluatePixel(s){
+  if(!s.dataMask)return[0,0,0,0];
+  const v=(s.B08-s.B04)/(s.B08+s.B04+1e-10);
+  if(v<0.10)return[110,55,15,220];
+  if(v<0.20)return[195,115,40,220];
+  if(v<0.32)return[225,205,45,220];
+  if(v<0.45)return[145,195,50,220];
+  if(v<0.60)return[65,155,35,220];
+  return[25,100,15,220];
+}`,
+
+  // EVI: mejor discriminación en pasturas densas, menos afectado por suelo y atmósfera
+  // EVI = 2.5 * (NIR-Red) / (NIR + 6*Red - 7.5*Blue + 1)
+  EVI: `//VERSION=3
+function setup(){return{input:[{bands:["B02","B04","B08","dataMask"]}],output:{bands:4,sampleType:"UINT8"}}}
+function evaluatePixel(s){
+  if(!s.dataMask)return[0,0,0,0];
+  const v=2.5*(s.B08-s.B04)/(s.B08+6*s.B04-7.5*s.B02+1+1e-10);
+  if(v<0.10)return[110,55,15,220];
+  if(v<0.20)return[195,115,40,220];
+  if(v<0.32)return[225,205,45,220];
+  if(v<0.45)return[145,195,50,220];
+  if(v<0.60)return[65,155,35,220];
+  return[25,100,15,220];
+}`,
+
+  // NDRE: (NIR-RedEdge)/(NIR+RedEdge) — muy sensible a clorofila, detecta stress temprano
+  // Rango útil en pasturas: 0.05 a 0.40 (más estrecho que NDVI)
+  NDRE: `//VERSION=3
+function setup(){return{input:[{bands:["B05","B08","dataMask"]}],output:{bands:4,sampleType:"UINT8"}}}
+function evaluatePixel(s){
+  if(!s.dataMask)return[0,0,0,0];
+  const v=(s.B08-s.B05)/(s.B08+s.B05+1e-10);
+  if(v<0.05)return[110,55,15,220];
+  if(v<0.10)return[195,115,40,220];
+  if(v<0.18)return[225,205,45,220];
+  if(v<0.25)return[145,195,50,220];
+  if(v<0.33)return[65,155,35,220];
+  return[25,100,15,220];
+}`,
+};
 
 async function getToken() {
   const res = await fetch(
@@ -40,29 +75,27 @@ async function getToken() {
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
 
-  // Leaflet envía parámetros WMS en minúsculas
   const q = req.query;
-  const BBOX = q.BBOX || q.bbox;
-  const WIDTH = q.WIDTH || q.width || '256';
+  const BBOX  = q.BBOX  || q.bbox;
+  const WIDTH  = q.WIDTH  || q.width  || '256';
   const HEIGHT = q.HEIGHT || q.height || '256';
-  const TIME = q.TIME || q.time;
+  const TIME   = q.TIME   || q.time;
+  const INDEX  = (q.INDEX || q.index || 'NDVI').toUpperCase();
 
   if (!BBOX) return res.status(400).json({ error: 'BBOX requerido', query: q });
 
-  // Parsear BBOX (viene en EPSG:3857 desde Leaflet WMS 1.3.0: minx,miny,maxx,maxy)
+  const evalscript = EVALSCRIPTS[INDEX] || EVALSCRIPTS.NDVI;
   const [minx, miny, maxx, maxy] = BBOX.split(',').map(Number);
 
-  // Determinar rango de fechas: siempre 30 días hasta la fecha elegida
-  // Sentinel-2 tiene revisita ~5 días — un rango de 1 día devuelve vacío casi siempre
+  // Ventana de 30 días hasta la fecha elegida (S2 revisita ~5 días)
   let timeFrom, timeTo;
   if (TIME) {
-    // TIME puede venir como "2025-12-01T00:00:00Z/2025-12-01T23:59:59Z" o solo "2025-12-01"
     const endDate = TIME.includes('/') ? TIME.split('/')[1] : TIME.replace('T00:00:00Z', 'T23:59:59Z');
     const end = new Date(endDate);
     const start = new Date(end);
     start.setDate(start.getDate() - 30);
     timeFrom = start.toISOString();
-    timeTo = end.toISOString();
+    timeTo   = end.toISOString();
   } else {
     const now = new Date();
     timeTo = now.toISOString();
@@ -86,7 +119,7 @@ export default async function handler(req, res) {
           dataFilter: {
             timeRange: { from: timeFrom, to: timeTo },
             maxCloudCoverage: 100,
-            mosaickingOrder: 'leastCC'  // prioriza menor cobertura de nubes
+            mosaickingOrder: 'leastCC'
           }
         }]
       },
@@ -95,15 +128,12 @@ export default async function handler(req, res) {
         height: parseInt(HEIGHT),
         responses: [{ identifier: 'default', format: { type: 'image/png' } }]
       },
-      evalscript: EVALSCRIPT
+      evalscript
     };
 
     const upstream = await fetch('https://sh.dataspace.copernicus.eu/api/v1/process', {
       method: 'POST',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json'
-      },
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify(body)
     });
 
@@ -112,7 +142,7 @@ export default async function handler(req, res) {
 
     if (!ct.includes('image/')) {
       const text = Buffer.from(buf).toString('utf-8');
-      console.error('NDVI Process API error:', upstream.status, text.slice(0, 400));
+      console.error('Process API error:', upstream.status, text.slice(0, 400));
       return res.status(502).json({ error: 'Process API error', status: upstream.status, body: text.slice(0, 400) });
     }
 

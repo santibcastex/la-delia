@@ -81,7 +81,7 @@ const MASK_RINGS = POSTREROS_GEOJSON.features.flatMap(f =>
   )
 );
 
-function MapView({ onPotreroClick, modoMover, ndviActive, ndviDate }) {
+function MapView({ onPotreroClick, modoMover, ndviActive, ndviDate, ndviIndex }) {
   const mapContainer = useRef(null);
   const map = useRef(null);
   const layersRef = useRef({});
@@ -101,8 +101,8 @@ function MapView({ onPotreroClick, modoMover, ndviActive, ndviDate }) {
       const timeRange = `${ndviDate}T00:00:00Z/${ndviDate}T23:59:59Z`;
       ndviLayerRef.current = L.tileLayer.wms('/api/ndvi-tile', {
         layers: 'NDVI', format: 'image/png', transparent: true,
-        version: '1.3.0', time: timeRange, opacity: 0.88,
-        attribution: 'NDVI Sentinel-2 © Copernicus'
+        version: '1.3.0', time: timeRange, index: ndviIndex || 'NDVI', opacity: 0.88,
+        attribution: 'Sentinel-2 © Copernicus'
       });
       ndviLayerRef.current.on('tileerror', (e) => console.error('NDVI tile error:', e.tile.src));
       ndviLayerRef.current.addTo(map.current);
@@ -113,7 +113,7 @@ function MapView({ onPotreroClick, modoMover, ndviActive, ndviDate }) {
         color: 'none', fillColor: '#0a0a0a', fillOpacity: 0.72, interactive: false
       }).addTo(map.current);
     }
-  }, [ndviActive, ndviDate]);
+  }, [ndviActive, ndviDate, ndviIndex]);
 
   // Actualizar estilos cuando cambia modoMover
   useEffect(() => {
@@ -185,6 +185,7 @@ function App() {
   const [modoMover, setModoMover] = useState(null);
   const [showNDVI, setShowNDVI] = useState(false);
   const [ndviDate, setNdviDate] = useState(getNdviDates()[0] || '');
+  const [ndviIndex, setNdviIndex] = useState('NDVI');
   const NDVI_DATES = getNdviDates();
 
   useEffect(() => {
@@ -379,14 +380,30 @@ function App() {
       <div style={{ display: 'flex', flex: 1, flexDirection: 'column', overflow: 'hidden' }}>
       <div style={{ display: 'flex', flex: showPlanilla ? '0 0 60%' : '1', gap: '1px', overflow: 'hidden' }}>
         <div style={{ flex: 2, position: 'relative' }}>
-          <MapView onPotreroClick={handlePotreroClick} modoMover={modoMover} ndviActive={showNDVI} ndviDate={ndviDate} />
+          <MapView onPotreroClick={handlePotreroClick} modoMover={modoMover} ndviActive={showNDVI} ndviDate={ndviDate} ndviIndex={ndviIndex} />
           {/* Panel control NDVI */}
           {showNDVI && (
-            <div style={{ position: 'absolute', bottom: '1.5rem', left: '1rem', zIndex: 1000, backgroundColor: 'rgba(0,0,0,0.82)', borderRadius: '6px', padding: '0.75rem 1rem', color: '#fff', fontSize: '0.82rem', minWidth: '200px' }}>
-              <div style={{ fontWeight: '700', marginBottom: '0.5rem', color: '#4caf50' }}>
-                🌿 NDVI — activo (Sentinel-2)
+            <div style={{ position: 'absolute', bottom: '1.5rem', left: '1rem', zIndex: 1000, backgroundColor: 'rgba(0,0,0,0.85)', borderRadius: '6px', padding: '0.75rem 1rem', color: '#fff', fontSize: '0.82rem', minWidth: '210px' }}>
+              <div style={{ fontWeight: '700', marginBottom: '0.6rem', color: '#4caf50' }}>
+                🌿 {ndviIndex} — activo (Sentinel-2)
               </div>
-              <label style={{ display: 'block', color: '#aaa', marginBottom: '0.25rem', fontSize: '0.75rem' }}>Fecha (10 días)</label>
+              {/* Selector de índice */}
+              <div style={{ display: 'flex', gap: '0.3rem', marginBottom: '0.7rem' }}>
+                {[
+                  { id: 'NDVI', label: 'NDVI', tip: 'General' },
+                  { id: 'EVI',  label: 'EVI',  tip: 'Pasturas densas' },
+                  { id: 'NDRE', label: 'NDRE', tip: 'Clorofila / estrés' },
+                ].map(({ id, label, tip }) => (
+                  <button key={id} onClick={() => setNdviIndex(id)} title={tip} style={{
+                    flex: 1, padding: '0.25rem 0', fontSize: '0.75rem', fontWeight: '700',
+                    border: '1px solid', borderRadius: '3px', cursor: 'pointer',
+                    backgroundColor: ndviIndex === id ? '#4caf50' : '#1a1a1a',
+                    color: ndviIndex === id ? '#000' : '#aaa',
+                    borderColor: ndviIndex === id ? '#4caf50' : '#444',
+                  }}>{label}</button>
+                ))}
+              </div>
+              <label style={{ display: 'block', color: '#aaa', marginBottom: '0.25rem', fontSize: '0.75rem' }}>Fecha imagen</label>
               <select
                 value={ndviDate}
                 onChange={e => setNdviDate(e.target.value)}
@@ -395,14 +412,13 @@ function App() {
                 {NDVI_DATES.map(d => <option key={d} value={d}>{d}</option>)}
               </select>
               {/* Leyenda */}
-              <div style={{ fontSize: '0.72rem', color: '#aaa', marginBottom: '0.25rem' }}>Índice NDVI</div>
-              <div style={{ display: 'flex', height: '10px', borderRadius: '3px', overflow: 'hidden', marginBottom: '0.3rem' }}>
-                {['#7b2a2a','#c0392b','#e67e22','#f1c40f','#a8d08d','#4caf50','#1a6b1a'].map((c,i) => (
+              <div style={{ display: 'flex', height: '8px', borderRadius: '3px', overflow: 'hidden', marginBottom: '0.3rem' }}>
+                {['#6e3710','#c37328','#e1cd2d','#91c332','#419f23','#196410'].map((c,i) => (
                   <div key={i} style={{ flex: 1, backgroundColor: c }} />
                 ))}
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.68rem', color: '#888' }}>
-                <span>-1 suelo</span><span>0</span><span>1 pasturas</span>
+                <span>suelo</span><span>escaso</span><span>bueno</span><span>excelente</span>
               </div>
             </div>
           )}
