@@ -191,34 +191,40 @@ function makeNdviCanvasLayer(url, farmBoundsLL) {
 // ─── Forraje Panel ────────────────────────────────────────────────────────────
 
 function parseGeeCSV(text) {
-  // Returns {'YYYY-MM': {oferta_kg_total, oferta_ha_avg}} grouped by month
+  // Returns { byMonth: {'YYYY-MM': {oferta_kg, ha_sum, ...}}, byPotrero: {'nombre': {'YYYY-MM': ms_kg_ha}} }
   const lines = text.trim().split('\n');
   const header = lines[0].split(',').map(h => h.trim());
   const iDate = header.indexOf('fecha');
+  const iNombre = header.indexOf('nombre');
   const iMsKgTotal = header.indexOf('ms_kg_total');
   const iMsKgHa = header.indexOf('ms_kg_ha');
   const iHa = header.indexOf('ha');
-  if (iDate < 0 || iMsKgTotal < 0) return {};
-  const monthly = {};
+  if (iDate < 0 || iMsKgTotal < 0) return { byMonth: {}, byPotrero: {} };
+  const byMonth = {};
+  const byPotrero = {};
   lines.slice(1).forEach(line => {
     const cols = line.split(',');
     const ym = (cols[iDate] || '').slice(0, 7);
+    const nombre = iNombre >= 0 ? (cols[iNombre] || '').trim() : '';
     if (!ym) return;
     const msTotal = parseFloat(cols[iMsKgTotal]);
     const msHa = iMsKgHa >= 0 ? parseFloat(cols[iMsKgHa]) : null;
     const ha = iHa >= 0 ? parseFloat(cols[iHa]) : null;
     if (!isNaN(msTotal)) {
-      if (!monthly[ym]) monthly[ym] = { oferta_kg: 0, ha_sum: 0, ha_weighted_ms: 0 };
-      monthly[ym].oferta_kg += msTotal;
-      if (ha && !isNaN(ha)) monthly[ym].ha_sum += ha;
-      if (msHa && !isNaN(msHa) && ha && !isNaN(ha)) monthly[ym].ha_weighted_ms += msHa * ha;
+      if (!byMonth[ym]) byMonth[ym] = { oferta_kg: 0, ha_sum: 0, ha_weighted_ms: 0 };
+      byMonth[ym].oferta_kg += msTotal;
+      if (ha && !isNaN(ha)) byMonth[ym].ha_sum += ha;
+      if (msHa && !isNaN(msHa) && ha && !isNaN(ha)) byMonth[ym].ha_weighted_ms += msHa * ha;
+    }
+    if (nombre && msHa != null && !isNaN(msHa)) {
+      if (!byPotrero[nombre]) byPotrero[nombre] = {};
+      byPotrero[nombre][ym] = Math.round(msHa);
     }
   });
-  // Compute weighted avg kg/ha
-  Object.values(monthly).forEach(m => {
+  Object.values(byMonth).forEach(m => {
     m.oferta_ha_avg = m.ha_sum > 0 ? m.ha_weighted_ms / m.ha_sum : 0;
   });
-  return monthly;
+  return { byMonth, byPotrero };
 }
 
 function daysInMonth(ym) {
@@ -443,10 +449,10 @@ function ForrajePanel({ hacienda, historial }) {
   });
 
   // Curva forrajera: GEE CSV data (oferta) + hacienda demand
-  const curvaMonths = msData ? Object.keys(msData).sort() : [];
-  const curvaOfertaKg = curvaMonths.map(ym => msData[ym]?.oferta_kg ?? null);
+  const curvaMonths = msData ? Object.keys(msData.byMonth).sort() : [];
+  const curvaOfertaKg = curvaMonths.map(ym => msData.byMonth[ym]?.oferta_kg ?? null);
   const curvaOfertaDispKg = curvaMonths.map(ym => {
-    const v = msData?.[ym]?.oferta_kg;
+    const v = msData?.byMonth[ym]?.oferta_kg;
     return v != null ? v * (efficiency / 100) : null;
   });
   const curvaDemandaKg = curvaMonths.map(ym => {
@@ -504,8 +510,31 @@ function ForrajePanel({ hacienda, historial }) {
   const tabs = [
     { id: 'actual', label: 'Estado Actual' },
     { id: 'curva', label: 'Curva Forrajera' },
+    { id: 'potrero', label: 'Por Potrero' },
     { id: 'descanso', label: 'Período Descanso' },
   ];
+
+  // Por Potrero: heatmap — last 18 months
+  const heatmapMonths = curvaMonths.slice(-18);
+  const byPotrero = msData?.byPotrero ?? {};
+  const potreroNames = POSTREROS_GEOJSON.features
+    .map(f => f.properties.nombre)
+    .filter(n => byPotrero[n]);
+  const allHeatVals = potreroNames.flatMap(n => heatmapMonths.map(ym => byPotrero[n]?.[ym]).filter(v => v != null));
+  const heatMax = allHeatVals.length ? Math.max(...allHeatVals) : 1;
+  const heatMin = allHeatVals.length ? Math.min(...allHeatVals) : 0;
+  function heatColor(val) {
+    if (val == null) return '#1a1a1a';
+    const t = Math.max(0, Math.min(1, (val - heatMin) / Math.max(1, heatMax - heatMin)));
+    // red → yellow → green
+    if (t < 0.5) {
+      const r = 180, g = Math.round(t * 2 * 180), b = 0;
+      return `rgb(${r},${g},${b})`;
+    } else {
+      const r = Math.round((1 - (t - 0.5) * 2) * 180), g = 160, b = 0;
+      return `rgb(${r},${g},${b})`;
+    }
+  }
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', backgroundColor: '#0d0d0d', overflow: 'hidden' }}>
@@ -619,6 +648,63 @@ function ForrajePanel({ hacienda, historial }) {
                 <BalanceChart months={curvaMonths} balanceKg={curvaBalanceKg} />
                 <div style={{ marginTop: '0.75rem', fontSize: '0.72rem', color: '#444' }}>
                   Fuente: Google Earth Engine · Monteith (1972) · ERA5 + Sentinel-2 L2A 2020–2025
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
+        {/* ── POR POTRERO ── */}
+        {activeTab === 'potrero' && (
+          <div>
+            {msData === null && (
+              <div style={{ padding: '2rem', textAlign: 'center', color: '#555', fontSize: '0.85rem' }}>Cargando...</div>
+            )}
+            {msData !== null && (
+              <>
+                <div style={{ fontSize: '0.8rem', color: '#555', marginBottom: '1rem' }}>
+                  Producción MS (kg/ha/mes) por potrero · últimos 18 meses · escala: <span style={{ color: '#b44' }}>bajo</span> → <span style={{ color: '#8a8' }}>alto</span>
+                </div>
+                <div style={{ overflowX: 'auto' }}>
+                  <table style={{ borderCollapse: 'collapse', fontSize: '0.75rem', minWidth: '100%' }}>
+                    <thead>
+                      <tr style={{ backgroundColor: '#111' }}>
+                        <th style={{ padding: '0.4rem 0.75rem', textAlign: 'left', color: '#666', fontWeight: '600', whiteSpace: 'nowrap', position: 'sticky', left: 0, backgroundColor: '#111', borderBottom: '1px solid #2a2a2a', zIndex: 1 }}>Potrero</th>
+                        <th style={{ padding: '0.4rem 0.5rem', textAlign: 'right', color: '#666', fontWeight: '600', whiteSpace: 'nowrap', borderBottom: '1px solid #2a2a2a' }}>Ha</th>
+                        {heatmapMonths.map(ym => (
+                          <th key={ym} style={{ padding: '0.4rem 0.4rem', textAlign: 'center', color: '#555', fontWeight: '500', whiteSpace: 'nowrap', borderBottom: '1px solid #2a2a2a', minWidth: '46px' }}>
+                            {ym.slice(5) + '/' + ym.slice(2, 4)}
+                          </th>
+                        ))}
+                        <th style={{ padding: '0.4rem 0.5rem', textAlign: 'right', color: '#666', fontWeight: '600', whiteSpace: 'nowrap', borderBottom: '1px solid #2a2a2a' }}>Prom.</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {potreroNames.map((nombre, ri) => {
+                        const ha = POSTREROS_GEOJSON.features.find(f => f.properties.nombre === nombre)?.properties.ha;
+                        const vals = heatmapMonths.map(ym => byPotrero[nombre]?.[ym] ?? null);
+                        const validVals = vals.filter(v => v != null);
+                        const avg = validVals.length ? Math.round(validVals.reduce((s, v) => s + v, 0) / validVals.length) : null;
+                        return (
+                          <tr key={nombre} style={{ backgroundColor: ri % 2 === 0 ? '#111' : '#131313' }}>
+                            <td style={{ padding: '0.35rem 0.75rem', fontWeight: '700', color: '#ffeb3b', whiteSpace: 'nowrap', position: 'sticky', left: 0, backgroundColor: ri % 2 === 0 ? '#111' : '#131313', zIndex: 1 }}>{nombre}</td>
+                            <td style={{ padding: '0.35rem 0.5rem', color: '#666', textAlign: 'right' }}>{ha?.toFixed(0)}</td>
+                            {vals.map((v, ci) => (
+                              <td key={ci} style={{ padding: '0.35rem 0.4rem', textAlign: 'center', backgroundColor: heatColor(v), color: v != null ? (v > (heatMax * 0.5) ? '#000' : '#fff') : '#333', fontWeight: '600' }}>
+                                {v != null ? v : '—'}
+                              </td>
+                            ))}
+                            <td style={{ padding: '0.35rem 0.5rem', textAlign: 'right', color: '#aaa', fontWeight: '700' }}>
+                              {avg != null ? avg : '—'}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+                <div style={{ marginTop: '0.75rem', fontSize: '0.72rem', color: '#444' }}>
+                  Fuente: Google Earth Engine · Monteith (1972) · ERA5 + Sentinel-2 L2A
                 </div>
               </>
             )}
