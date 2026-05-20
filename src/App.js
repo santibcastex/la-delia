@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { initializeApp } from 'firebase/app';
-import { getFirestore, collection, getDocs, addDoc, updateDoc, doc, setDoc } from 'firebase/firestore';
+import { getFirestore, collection, getDocs, addDoc, updateDoc, deleteDoc, doc, setDoc } from 'firebase/firestore';
 import { getAuth, signOut, onAuthStateChanged, GoogleAuthProvider, signInWithRedirect, signInWithPopup, getRedirectResult } from 'firebase/auth';
 import './App.css';
 
@@ -76,12 +76,14 @@ const POSTREROS_GEOJSON = {
   ]
 };
 
+const CATEGORIAS_ORDEN = ['Toritos', 'Toros', 'Vacas c/Cría', 'Vaquillonas 1-2 Años', 'Vaquillonas +2 Años'];
+
 const HACIENDA_INICIAL = [
-  { id: 1, nombre: 'Toritos', cantidad: 5, peso_promedio: 150, potrero: null },
-  { id: 2, nombre: 'Toros', cantidad: 26, peso_promedio: 550, potrero: null },
-  { id: 3, nombre: 'Vacas c/Cría', cantidad: 748, peso_promedio: 480, potrero: null },
-  { id: 4, nombre: 'Vaquillonas 1-2 Años', cantidad: 196, peso_promedio: 350, potrero: null },
-  { id: 5, nombre: 'Vaquillonas +2 Años', cantidad: 219, peso_promedio: 420, potrero: null }
+  { id: 1, nombre: 'Toritos',            rodeo: null, cantidad: 5,   peso_promedio: 150, potrero: null },
+  { id: 2, nombre: 'Toros',              rodeo: null, cantidad: 26,  peso_promedio: 550, potrero: null },
+  { id: 3, nombre: 'Vacas c/Cría',       rodeo: null, cantidad: 748, peso_promedio: 480, potrero: null },
+  { id: 4, nombre: 'Vaquillonas 1-2 Años', rodeo: null, cantidad: 196, peso_promedio: 350, potrero: null },
+  { id: 5, nombre: 'Vaquillonas +2 Años',  rodeo: null, cantidad: 219, peso_promedio: 420, potrero: null }
 ];
 
 const STYLE_NORMAL  = { color: '#c41e3a', weight: 2, opacity: 0.9, fillColor: '#2d5016', fillOpacity: 0.4 };
@@ -1147,6 +1149,7 @@ function App() {
   const [historial, setHistorial] = useState({});
   const [selectedPotrero, setSelectedPotrero] = useState(null);
   const [draggedCategory, setDraggedCategory] = useState(null);
+  const [addingRodeo, setAddingRodeo] = useState(null); // { catNombre, nombre, cantidad }
   const [dropOver, setDropOver] = useState(false);
   const [activeSection, setActiveSection] = useState('mapa'); // 'mapa' | 'forraje' | 'planilla'
   const [modoMover, setModoMover] = useState(null);
@@ -1238,6 +1241,24 @@ function App() {
       console.error('Error:', error);
     }
     setModoMover(null);
+  };
+
+  const agregarSubrodeo = async (catNombre, rodeoNombre, cantidad) => {
+    const pesoRef = hacienda.find(h => h.nombre === catNombre)?.peso_promedio || 450;
+    const newEntry = { nombre: catNombre, rodeo: rodeoNombre, cantidad: parseInt(cantidad) || 0, peso_promedio: pesoRef, potrero: null, fecha_ingreso: null, fecha_salida: null };
+    try {
+      const docRef = await addDoc(collection(db, 'hacienda'), newEntry);
+      setHacienda(prev => [...prev, { ...newEntry, id: docRef.id, docId: docRef.id }]);
+    } catch (e) { console.error(e); }
+  };
+
+  const eliminarSubrodeo = async (entryId) => {
+    const entry = hacienda.find(h => h.id === entryId);
+    if (!entry) return;
+    try {
+      if (entry.docId) await deleteDoc(doc(db, 'hacienda', entry.docId));
+      setHacienda(prev => prev.filter(h => h.id !== entryId));
+    } catch (e) { console.error(e); }
   };
 
   const handlePotreroClick = (props) => {
@@ -1450,7 +1471,7 @@ function App() {
                       </div>
                       <div>
                         <span style={{ display: 'block', fontSize: '0.72rem', color: '#aaa', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '0.15rem' }}>Categorías</span>
-                        <span style={{ display: 'block', fontSize: '1.3rem', fontWeight: 'bold', color: '#ffeb3b' }}>{hacienda.filter(h => h.potrero === selectedPotrero.nombre).length}</span>
+                        <span style={{ display: 'block', fontSize: '1.3rem', fontWeight: 'bold', color: '#ffeb3b' }}>{hacienda.filter(h => h.potrero === selectedPotrero.nombre).reduce((s,h)=>s+(h.cantidad||0),0).toLocaleString()}</span>
                       </div>
                     </div>
                     {showNDVI && ndviIndex !== 'NATURAL' && (
@@ -1470,7 +1491,7 @@ function App() {
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem', marginTop: '0.4rem' }}>
                         {hacienda.filter(h => h.potrero === selectedPotrero.nombre).map(cat => (
                           <div key={cat.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.35rem 0.5rem', backgroundColor: '#1a1a1a', borderRadius: '3px', fontSize: '0.83rem' }}>
-                            <span>{cat.nombre} — <strong>{cat.cantidad}</strong> cab.</span>
+                            <span>{cat.rodeo ? `${cat.nombre} · ${cat.rodeo}` : cat.nombre} — <strong>{cat.cantidad}</strong> cab.</span>
                             <button onClick={() => moverAPotrero(cat.id, null)} title="Desasignar" style={{ background: 'none', border: 'none', color: '#aaa', cursor: 'pointer', fontSize: '1rem', padding: '0 0.25rem' }}>✕</button>
                           </div>
                         ))}
@@ -1488,32 +1509,87 @@ function App() {
                   </div>
                 )}
 
-                {/* Hacienda list */}
-                <div style={{ flex: 1 }}>
+                {/* Hacienda list — grouped by category */}
+                <div style={{ flex: 1, overflowY: 'auto' }}>
                   <h3 style={{ fontSize: '0.9rem', fontWeight: '600', margin: '0 0 0.6rem 0', textTransform: 'uppercase', letterSpacing: '0.5px', borderBottom: '1px solid #2a2a2a', paddingBottom: '0.5rem', color: '#aaa' }}>
                     Hacienda {draggedCategory ? '— arrastrando...' : ''}
                   </h3>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                    {hacienda.filter(h => h.cantidad > 0).map((cat) => (
-                      <div
-                        key={cat.id}
-                        draggable
-                        onDragStart={() => setDraggedCategory(cat.id)}
-                        onDragEnd={() => { setDraggedCategory(null); setDropOver(false); }}
-                        style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.55rem 0.65rem', backgroundColor: draggedCategory === cat.id ? '#3a3a3a' : '#2a2a2a', borderRadius: '3px', borderLeft: `3px solid ${cat.potrero ? '#4caf50' : '#c41e3a'}`, fontSize: '0.88rem', cursor: 'grab', opacity: draggedCategory === cat.id ? 0.6 : 1 }}
-                      >
-                        <div>
-                          <span style={{ display: 'block', fontWeight: '600', marginBottom: '0.1rem' }}>{cat.nombre}</span>
-                          <span style={{ display: 'block', fontSize: '0.75rem', color: cat.potrero ? '#4caf50' : '#666' }}>
-                            {cat.potrero ? `Potrero ${cat.potrero}` : 'Sin asignar'}
-                          </span>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                    {CATEGORIAS_ORDEN.map(catNombre => {
+                      const entries = hacienda.filter(h => h.nombre === catNombre);
+                      if (!entries.length) return null;
+                      const total = entries.reduce((s, h) => s + (h.cantidad || 0), 0);
+                      const multipleRodeos = entries.length > 1 || entries.some(e => e.rodeo);
+                      return (
+                        <div key={catNombre} style={{ backgroundColor: '#1e1e1e', borderRadius: '4px', border: '1px solid #2a2a2a', overflow: 'hidden' }}>
+                          {/* Category header */}
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.4rem 0.65rem', backgroundColor: '#252525', borderBottom: entries.length ? '1px solid #2a2a2a' : 'none' }}>
+                            <span style={{ fontSize: '0.78rem', fontWeight: '700', color: '#aaa', textTransform: 'uppercase', letterSpacing: '0.4px' }}>{catNombre}</span>
+                            <span style={{ fontSize: '0.9rem', fontWeight: '700', color: '#ffeb3b' }}>{total.toLocaleString()}</span>
+                          </div>
+                          {/* Rodeos */}
+                          {entries.map(entry => (
+                            <div
+                              key={entry.id}
+                              draggable
+                              onDragStart={() => setDraggedCategory(entry.id)}
+                              onDragEnd={() => { setDraggedCategory(null); setDropOver(false); }}
+                              style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.45rem 0.65rem', backgroundColor: draggedCategory === entry.id ? '#3a3a3a' : 'transparent', borderBottom: '1px solid #222', borderLeft: `3px solid ${entry.potrero ? '#4caf50' : '#c41e3a'}`, cursor: 'grab', opacity: draggedCategory === entry.id ? 0.6 : 1 }}
+                            >
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <span style={{ display: 'block', fontSize: '0.82rem', fontWeight: '600', color: '#ddd', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                  {entry.rodeo || (multipleRodeos ? 'Principal' : catNombre.split(' ')[0])}
+                                </span>
+                                <span style={{ display: 'block', fontSize: '0.72rem', color: entry.potrero ? '#4caf50' : '#555' }}>
+                                  {entry.potrero ? `Potrero ${entry.potrero}` : 'Sin asignar'}
+                                </span>
+                              </div>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                <div style={{ textAlign: 'right' }}>
+                                  <span style={{ display: 'block', fontSize: '1rem', fontWeight: 'bold', color: '#fff' }}>{(entry.cantidad || 0).toLocaleString()}</span>
+                                  <span style={{ display: 'block', fontSize: '0.7rem', color: '#555' }}>{entry.peso_promedio} kg</span>
+                                </div>
+                                {(entry.rodeo || entries.length > 1) && (
+                                  <button onClick={() => eliminarSubrodeo(entry.id)} title="Eliminar rodeo"
+                                    style={{ background: 'none', border: 'none', color: '#555', cursor: 'pointer', fontSize: '0.9rem', padding: '0 0.2rem', lineHeight: 1 }}>✕</button>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                          {/* Add sub-rodeo */}
+                          {addingRodeo?.catNombre === catNombre ? (
+                            <div style={{ padding: '0.5rem 0.65rem', display: 'flex', gap: '0.4rem', alignItems: 'center', flexWrap: 'wrap', backgroundColor: '#161616' }}>
+                              <input
+                                placeholder="Nombre rodeo"
+                                value={addingRodeo.nombre}
+                                onChange={e => setAddingRodeo(a => ({ ...a, nombre: e.target.value }))}
+                                style={{ flex: 1, minWidth: '80px', backgroundColor: '#222', color: '#fff', border: '1px solid #444', borderRadius: '3px', padding: '0.25rem 0.4rem', fontSize: '0.78rem' }}
+                              />
+                              <input
+                                type="number" placeholder="Cant." min={0}
+                                value={addingRodeo.cantidad}
+                                onChange={e => setAddingRodeo(a => ({ ...a, cantidad: e.target.value }))}
+                                style={{ width: '60px', backgroundColor: '#222', color: '#fff', border: '1px solid #444', borderRadius: '3px', padding: '0.25rem 0.4rem', fontSize: '0.78rem' }}
+                              />
+                              <button onClick={() => { agregarSubrodeo(catNombre, addingRodeo.nombre, addingRodeo.cantidad); setAddingRodeo(null); }}
+                                style={{ padding: '0.25rem 0.5rem', backgroundColor: '#1a3a1a', color: '#4caf50', border: '1px solid #4caf50', borderRadius: '3px', fontSize: '0.75rem', cursor: 'pointer' }}>
+                                Guardar
+                              </button>
+                              <button onClick={() => setAddingRodeo(null)}
+                                style={{ padding: '0.25rem 0.5rem', background: 'none', color: '#555', border: '1px solid #333', borderRadius: '3px', fontSize: '0.75rem', cursor: 'pointer' }}>
+                                Cancelar
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              onClick={() => setAddingRodeo({ catNombre, nombre: `Rodeo ${entries.length + 1}`, cantidad: '' })}
+                              style={{ width: '100%', padding: '0.3rem', background: 'none', border: 'none', color: '#444', fontSize: '0.75rem', cursor: 'pointer', textAlign: 'left', paddingLeft: '0.65rem' }}>
+                              + agregar rodeo
+                            </button>
+                          )}
                         </div>
-                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
-                          <span style={{ fontSize: '1.1rem', fontWeight: 'bold', color: '#fff' }}>{cat.cantidad}</span>
-                          <span style={{ fontSize: '0.75rem', color: '#666' }}>{cat.peso_promedio} kg</span>
-                        </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
 
@@ -1525,7 +1601,7 @@ function App() {
                   </div>
                   <div style={{ display: 'flex', flexDirection: 'column', padding: '0.75rem', backgroundColor: '#2a2a2a', borderRadius: '3px', border: '1px solid #222' }}>
                     <span style={{ fontSize: '0.7rem', color: '#aaa', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '0.35rem' }}>Asignados</span>
-                    <span style={{ fontSize: '1.6rem', fontWeight: 'bold', color: '#ffeb3b' }}>{hacienda.filter(h => h.potrero).length}/{hacienda.length}</span>
+                    <span style={{ fontSize: '1.6rem', fontWeight: 'bold', color: '#ffeb3b' }}>{hacienda.filter(h => h.potrero).reduce((s,h)=>s+(h.cantidad||0),0).toLocaleString()}</span>
                   </div>
                 </div>
               </div>
@@ -1561,7 +1637,7 @@ function App() {
                       <td style={{ padding: '0.5rem 0.75rem', fontWeight: '700', color: '#ffeb3b' }}>{fila.nombre}</td>
                       <td style={{ padding: '0.5rem 0.75rem', color: '#666' }}>{fila.ha.toFixed(1)}</td>
                       <td style={{ padding: '0.5rem 0.75rem', color: fila.asignadas.length ? '#fff' : '#333' }}>
-                        {fila.asignadas.length ? fila.asignadas.map(a => a.nombre).join(', ') : '—'}
+                        {fila.asignadas.length ? fila.asignadas.map(a => a.rodeo ? `${a.nombre} · ${a.rodeo}` : a.nombre).join(', ') : '—'}
                       </td>
                       <td style={{ padding: '0.5rem 0.75rem', color: fila.cabezas ? '#fff' : '#333', textAlign: 'right' }}>
                         {fila.cabezas || '—'}
