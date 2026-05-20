@@ -973,6 +973,352 @@ function ForrajePanel({ hacienda, historial }) {
   );
 }
 
+// ─── Planilla Panel ───────────────────────────────────────────────────────────
+
+const PLANILLA_CATS = [
+  { key: 'toritos',      label: 'Toritos',         grupo: 'Toros',        ev: 0.8  },
+  { key: 'toros',        label: 'Toros',            grupo: 'Toros',        ev: 1.2  },
+  { key: 'toros_desecho',label: 'Toros desecho',    grupo: 'Toros',        ev: 1.0  },
+  { key: 'vacas_ss',     label: 'Vacas S/S',        grupo: 'Vacas',        ev: 1.0  },
+  { key: 'vacas_prenadas',label: 'Vacas preñadas',  grupo: 'Vacas',        ev: 0.9  },
+  { key: 'vacas_cut',    label: 'Vacas CUT',        grupo: 'Vacas',        ev: 1.0  },
+  { key: 'vacas_cria',   label: 'Vacas c/Cría',     grupo: 'Vacas',        ev: 1.0  },
+  { key: 'vacas_engorde',label: 'Vacas engorde',    grupo: 'Vacas',        ev: 0.7  },
+  { key: 'vaqs_repo1518',label: 'Vaq 15/18M',       grupo: 'Vaquillonas',  ev: 0.8  },
+  { key: 'vaqs_repo2224',label: 'Vaq 22/24M',       grupo: 'Vaquillonas',  ev: 0.7  },
+  { key: 'vaqs_1serv',   label: 'Vaq 1er serv',     grupo: 'Vaquillonas',  ev: 0.8  },
+  { key: 'vaqs_2serv',   label: 'Vaq 2do serv',     grupo: 'Vaquillonas',  ev: 1.2  },
+  { key: 'vaqs_inv',     label: 'Vaq invernada',    grupo: 'Vaquillonas',  ev: 0.7  },
+  { key: 'nov_menor1',   label: 'Nov <1 año',        grupo: 'Novillos',     ev: 0.8  },
+  { key: 'nov_1_2',      label: 'Nov 1-2',           grupo: 'Novillos',     ev: 0.0  },
+  { key: 'nov_mayor2',   label: 'Nov >2',            grupo: 'Novillos',     ev: 0.0  },
+  { key: 'tern_inv_m',   label: 'T inv M',           grupo: 'Terneros',     ev: 0.0  },
+  { key: 'tern_inv_h',   label: 'T inv H',           grupo: 'Terneros',     ev: 0.0  },
+  { key: 'tern_ot_m',    label: 'T otoño M',         grupo: 'Terneros',     ev: 0.3  },
+  { key: 'tern_ot_h',    label: 'T otoño H',         grupo: 'Terneros',     ev: 0.3  },
+];
+
+const PLANILLA_KEYS = PLANILLA_CATS.map(c => c.key);
+const HA_ESTABLECIMIENTO = 1685;
+
+function calcCierre(apertura, entradas, salidas) {
+  const cierre = {};
+  for (const k of PLANILLA_KEYS) {
+    let e = 0, s = 0;
+    for (const v of Object.values(entradas || {})) e += (v[k] || 0);
+    for (const v of Object.values(salidas || {})) s += (v[k] || 0);
+    cierre[k] = (apertura[k] || 0) + e - s;
+  }
+  return cierre;
+}
+
+function totalStock(stock) {
+  return PLANILLA_KEYS.reduce((sum, k) => sum + (stock[k] || 0), 0);
+}
+
+function calcEV(stock) {
+  return PLANILLA_CATS.reduce((sum, c) => sum + (stock[c.key] || 0) * c.ev, 0);
+}
+
+function PlanillaPanel({ db }) {
+  const [planillaData, setPlanillaData] = useState(null);
+  const [selectedYM, setSelectedYM] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [importing, setImporting] = useState(false);
+  const [importProgress, setImportProgress] = useState(null);
+  const [editCell, setEditCell] = useState(null);
+  const [editValue, setEditValue] = useState('');
+
+  const months = planillaData ? Object.keys(planillaData).sort() : [];
+  const currentYM = selectedYM || months[months.length - 1] || null;
+  const entry = currentYM && planillaData ? planillaData[currentYM] : null;
+
+  useEffect(() => {
+    async function load() {
+      setLoading(true);
+      try {
+        const snap = await getDocs(collection(db, 'planilla_mensual'));
+        if (snap.size > 0) {
+          const data = {};
+          snap.docs.forEach(d => { data[d.id] = d.data(); });
+          setPlanillaData(data);
+          const yms = Object.keys(data).sort();
+          setSelectedYM(yms[yms.length - 1]);
+        } else {
+          setPlanillaData({});
+        }
+      } catch (e) {
+        console.error(e);
+        setPlanillaData({});
+      }
+      setLoading(false);
+    }
+    load();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const importHistorico = async () => {
+    setImporting(true);
+    setImportProgress('Cargando archivo...');
+    try {
+      const res = await fetch('/planilla_historica.json');
+      const json = await res.json();
+      const yms = Object.keys(json.months).sort();
+      let done = 0;
+      for (const ym of yms) {
+        const m = json.months[ym];
+        await setDoc(doc(db, 'planilla_mensual', ym), { ym, apertura: m.apertura, entradas: m.entradas, salidas: m.salidas });
+        done++;
+        setImportProgress(`${done}/${yms.length} meses importados...`);
+      }
+      const snap = await getDocs(collection(db, 'planilla_mensual'));
+      const data = {};
+      snap.docs.forEach(d => { data[d.id] = d.data(); });
+      setPlanillaData(data);
+      const sortedYms = Object.keys(data).sort();
+      setSelectedYM(sortedYms[sortedYms.length - 1]);
+      setImportProgress(null);
+    } catch (e) {
+      console.error(e);
+      setImportProgress('Error: ' + e.message);
+    }
+    setImporting(false);
+  };
+
+  const saveCell = async (section, type, key, value) => {
+    if (!currentYM || !entry) return;
+    const num = parseInt(value) || 0;
+    const updated = JSON.parse(JSON.stringify(entry));
+    updated[section][type][key] = num;
+    await setDoc(doc(db, 'planilla_mensual', currentYM), updated, { merge: true });
+    setPlanillaData(prev => ({ ...prev, [currentYM]: updated }));
+  };
+
+  const startEdit = (section, type, key, currentVal) => {
+    setEditCell({ section, type, key });
+    setEditValue(String(currentVal || 0));
+  };
+
+  const commitEdit = async () => {
+    if (!editCell) return;
+    await saveCell(editCell.section, editCell.type, editCell.key, editValue);
+    setEditCell(null);
+  };
+
+  const TD = { style: { padding: '3px 6px', textAlign: 'right', fontSize: '0.72rem', borderRight: '1px solid #1a1a1a', minWidth: '38px', cursor: 'pointer', userSelect: 'none' } };
+  const TH_CAT = { style: { padding: '4px 5px', fontSize: '0.62rem', fontWeight: '600', color: '#888', textAlign: 'right', borderRight: '1px solid #1a1a1a', whiteSpace: 'nowrap', maxWidth: '62px', overflow: 'hidden', letterSpacing: '0.2px' } };
+
+  if (loading) return <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#555' }}>Cargando planilla...</div>;
+
+  const isEmpty = !planillaData || Object.keys(planillaData).length === 0;
+
+  if (isEmpty) {
+    return (
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '1rem', color: '#666' }}>
+        <div style={{ fontSize: '3rem' }}>📋</div>
+        <div style={{ fontSize: '1.1rem', color: '#aaa' }}>Planilla mensual sin datos</div>
+        <div style={{ fontSize: '0.85rem', color: '#555', textAlign: 'center', maxWidth: '340px' }}>
+          Importá los datos históricos (Sep 2019 – Nov 2025) desde el Excel
+        </div>
+        <button
+          onClick={importHistorico}
+          disabled={importing}
+          style={{ padding: '0.65rem 1.4rem', backgroundColor: '#4caf50', color: '#000', border: 'none', borderRadius: '4px', cursor: importing ? 'not-allowed' : 'pointer', fontSize: '0.9rem', fontWeight: '700', opacity: importing ? 0.6 : 1 }}
+        >
+          {importing ? importProgress || 'Importando...' : '⬆ Importar datos históricos'}
+        </button>
+      </div>
+    );
+  }
+
+  if (!entry) return <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#555' }}>Sin datos para este mes.</div>;
+
+  const cierre = calcCierre(entry.apertura || {}, entry.entradas || {}, entry.salidas || {});
+  const evCierre = calcEV(cierre);
+  const evHa = (evCierre / HA_ESTABLECIMIENTO).toFixed(3);
+
+  const grupos = [...new Set(PLANILLA_CATS.map(c => c.grupo))];
+
+  const SECTION_ROWS = [
+    { section: 'entradas', type: 'nacimientos',  label: 'Nacimientos',    color: '#1e3a1e' },
+    { section: 'entradas', type: 'traslados',    label: 'Traslados +',    color: '#1e3a1e' },
+    { section: 'entradas', type: 'compras',      label: 'Compras',        color: '#1e3a1e' },
+    { section: 'entradas', type: 'recuento',     label: 'Recuento +',     color: '#1e3a1e' },
+    { section: 'entradas', type: 'clasificacion',label: 'Clasif +',       color: '#1e3a1e' },
+    { section: 'salidas',  type: 'mortandad',    label: 'Mortandad',      color: '#3a1e1e' },
+    { section: 'salidas',  type: 'traslados',    label: 'Traslados −',    color: '#3a1e1e' },
+    { section: 'salidas',  type: 'ventas',       label: 'Ventas',         color: '#3a1e1e' },
+    { section: 'salidas',  type: 'consumo',      label: 'Consumo',        color: '#3a1e1e' },
+    { section: 'salidas',  type: 'recuento',     label: 'Recuento −',     color: '#3a1e1e' },
+    { section: 'salidas',  type: 'clasificacion',label: 'Clasif −',       color: '#3a1e1e' },
+  ];
+
+  const fmtMonth = (ym) => {
+    const [y, m] = ym.split('-');
+    const names = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+    return `${names[parseInt(m)-1]} ${y.slice(2)}`;
+  };
+
+  const renderCell = (section, type, key, bgColor) => {
+    const val = (entry[section]?.[type]?.[key]) || 0;
+    const isEditing = editCell?.section === section && editCell?.type === type && editCell?.key === key;
+    if (isEditing) {
+      return (
+        <td key={key} style={{ ...TD.style, backgroundColor: '#2a3a2a', padding: '1px 3px' }}>
+          <input
+            autoFocus
+            type="number"
+            value={editValue}
+            onChange={e => setEditValue(e.target.value)}
+            onBlur={commitEdit}
+            onKeyDown={e => { if (e.key === 'Enter') commitEdit(); if (e.key === 'Escape') setEditCell(null); }}
+            style={{ width: '36px', backgroundColor: '#111', color: '#fff', border: '1px solid #4caf50', borderRadius: '2px', fontSize: '0.72rem', textAlign: 'right', padding: '1px 3px' }}
+          />
+        </td>
+      );
+    }
+    return (
+      <td key={key} style={{ ...TD.style, color: val > 0 ? '#fff' : '#2a2a2a', backgroundColor: val > 0 ? bgColor : 'transparent' }} onClick={() => startEdit(section, type, key, val)}>
+        {val > 0 ? val : '·'}
+      </td>
+    );
+  };
+
+  const totalRow = (rowObj) => PLANILLA_KEYS.reduce((s, k) => s + ((entry[rowObj.section]?.[rowObj.type]?.[k]) || 0), 0);
+
+  return (
+    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', backgroundColor: '#0a0a0a' }}>
+      {/* Top bar */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.6rem 1rem', borderBottom: '1px solid #1e1e1e', flexShrink: 0, flexWrap: 'wrap' }}>
+        <span style={{ fontSize: '0.8rem', color: '#666', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Mes:</span>
+        <select
+          value={currentYM || ''}
+          onChange={e => setSelectedYM(e.target.value)}
+          style={{ backgroundColor: '#111', color: '#fff', border: '1px solid #333', borderRadius: '3px', padding: '0.3rem 0.5rem', fontSize: '0.82rem', cursor: 'pointer' }}
+        >
+          {months.map(ym => <option key={ym} value={ym}>{fmtMonth(ym)}</option>)}
+        </select>
+        <div style={{ display: 'flex', gap: '1.5rem', marginLeft: '1rem' }}>
+          <span style={{ fontSize: '0.8rem', color: '#aaa' }}>Apertura: <strong style={{ color: '#ffeb3b' }}>{totalStock(entry.apertura || {})}</strong></span>
+          <span style={{ fontSize: '0.8rem', color: '#aaa' }}>Cierre: <strong style={{ color: '#4caf50' }}>{totalStock(cierre)}</strong></span>
+          <span style={{ fontSize: '0.8rem', color: '#aaa' }}>EV/ha: <strong style={{ color: '#81d4fa' }}>{evHa}</strong></span>
+        </div>
+        <div style={{ marginLeft: 'auto' }}>
+          {importing ? (
+            <span style={{ fontSize: '0.78rem', color: '#888' }}>{importProgress}</span>
+          ) : (
+            <button
+              onClick={importHistorico}
+              style={{ padding: '0.3rem 0.7rem', backgroundColor: '#1e2e1e', color: '#4caf50', border: '1px solid #4caf50', borderRadius: '3px', cursor: 'pointer', fontSize: '0.75rem', fontWeight: '600' }}
+            >
+              ⬆ Re-importar
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Scrollable table */}
+      <div style={{ flex: 1, overflow: 'auto' }}>
+        <table style={{ borderCollapse: 'collapse', fontSize: '0.72rem', tableLayout: 'fixed' }}>
+          <colgroup>
+            <col style={{ width: '110px' }} />
+            <col style={{ width: '45px' }} />
+            {PLANILLA_CATS.map(c => <col key={c.key} style={{ width: '42px' }} />)}
+          </colgroup>
+          <thead style={{ position: 'sticky', top: 0, zIndex: 2 }}>
+            <tr style={{ backgroundColor: '#0d0d0d' }}>
+              <th style={{ backgroundColor: '#0d0d0d', border: 'none' }} />
+              <th style={{ backgroundColor: '#0d0d0d', border: 'none' }} />
+              {grupos.map(g => {
+                const cols = PLANILLA_CATS.filter(c => c.grupo === g);
+                return <th key={g} colSpan={cols.length} style={{ padding: '4px', fontSize: '0.62rem', fontWeight: '700', color: '#666', textAlign: 'center', borderBottom: '1px solid #222', borderRight: '1px solid #333', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{g}</th>;
+              })}
+            </tr>
+            <tr style={{ backgroundColor: '#111' }}>
+              <th style={{ padding: '4px 8px', textAlign: 'left', fontSize: '0.65rem', color: '#555', fontWeight: '600', textTransform: 'uppercase', position: 'sticky', left: 0, backgroundColor: '#111', zIndex: 3, borderRight: '2px solid #222' }}>Concepto</th>
+              <th style={{ ...TH_CAT.style, textAlign: 'center' }}>Total</th>
+              {PLANILLA_CATS.map(c => <th key={c.key} {...TH_CAT}>{c.label}</th>)}
+            </tr>
+          </thead>
+          <tbody>
+            {/* Apertura */}
+            <tr style={{ backgroundColor: '#111', borderBottom: '2px solid #333' }}>
+              <td style={{ padding: '4px 8px', fontWeight: '700', color: '#ffeb3b', fontSize: '0.75rem', position: 'sticky', left: 0, backgroundColor: '#111', zIndex: 1, borderRight: '2px solid #222' }}>Apertura</td>
+              <td style={{ ...TD.style, color: '#ffeb3b', fontWeight: '700' }}>{totalStock(entry.apertura || {})}</td>
+              {PLANILLA_CATS.map(c => {
+                const val = (entry.apertura?.[c.key]) || 0;
+                return <td key={c.key} style={{ ...TD.style, color: val > 0 ? '#ffeb3b' : '#2a2a2a' }}>{val > 0 ? val : '·'}</td>;
+              })}
+            </tr>
+
+            {/* Entradas header */}
+            <tr style={{ backgroundColor: '#0d1a0d' }}>
+              <td colSpan={2 + PLANILLA_CATS.length} style={{ padding: '3px 8px', color: '#4caf50', fontSize: '0.68rem', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.5px' }}>+ Entradas</td>
+            </tr>
+            {SECTION_ROWS.filter(r => r.section === 'entradas').map(row => (
+              <tr key={`e-${row.type}`} style={{ backgroundColor: row.color }}>
+                <td style={{ padding: '2px 8px 2px 16px', color: '#5a8a5a', fontSize: '0.7rem', position: 'sticky', left: 0, backgroundColor: row.color, zIndex: 1, borderRight: '2px solid #222' }}>{row.label}</td>
+                <td style={{ ...TD.style, color: '#5a8a5a' }}>{totalRow(row) || '·'}</td>
+                {PLANILLA_CATS.map(c => renderCell(row.section, row.type, c.key, row.color))}
+              </tr>
+            ))}
+            <tr style={{ backgroundColor: '#162016', borderBottom: '2px solid #1e3a1e' }}>
+              <td style={{ padding: '3px 8px', fontWeight: '700', color: '#4caf50', fontSize: '0.72rem', position: 'sticky', left: 0, backgroundColor: '#162016', zIndex: 1, borderRight: '2px solid #222' }}>Total entradas</td>
+              <td style={{ ...TD.style, color: '#4caf50', fontWeight: '700' }}>
+                {PLANILLA_KEYS.reduce((s, k) => s + SECTION_ROWS.filter(r=>r.section==='entradas').reduce((ss,r)=>ss+((entry.entradas?.[r.type]?.[k])||0),0), 0)}
+              </td>
+              {PLANILLA_CATS.map(c => {
+                const tot = SECTION_ROWS.filter(r=>r.section==='entradas').reduce((s,r)=>s+((entry.entradas?.[r.type]?.[c.key])||0),0);
+                return <td key={c.key} style={{ ...TD.style, color: tot > 0 ? '#4caf50' : '#2a2a2a', fontWeight: tot > 0 ? '700' : '400' }}>{tot > 0 ? tot : '·'}</td>;
+              })}
+            </tr>
+
+            {/* Salidas header */}
+            <tr style={{ backgroundColor: '#1a0d0d' }}>
+              <td colSpan={2 + PLANILLA_CATS.length} style={{ padding: '3px 8px', color: '#ff6b6b', fontSize: '0.68rem', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.5px' }}>− Salidas</td>
+            </tr>
+            {SECTION_ROWS.filter(r => r.section === 'salidas').map(row => (
+              <tr key={`s-${row.type}`} style={{ backgroundColor: row.color }}>
+                <td style={{ padding: '2px 8px 2px 16px', color: '#8a5a5a', fontSize: '0.7rem', position: 'sticky', left: 0, backgroundColor: row.color, zIndex: 1, borderRight: '2px solid #222' }}>{row.label}</td>
+                <td style={{ ...TD.style, color: '#8a5a5a' }}>{totalRow(row) || '·'}</td>
+                {PLANILLA_CATS.map(c => renderCell(row.section, row.type, c.key, row.color))}
+              </tr>
+            ))}
+            <tr style={{ backgroundColor: '#201616', borderBottom: '2px solid #3a1e1e' }}>
+              <td style={{ padding: '3px 8px', fontWeight: '700', color: '#ff6b6b', fontSize: '0.72rem', position: 'sticky', left: 0, backgroundColor: '#201616', zIndex: 1, borderRight: '2px solid #222' }}>Total salidas</td>
+              <td style={{ ...TD.style, color: '#ff6b6b', fontWeight: '700' }}>
+                {PLANILLA_KEYS.reduce((s, k) => s + SECTION_ROWS.filter(r=>r.section==='salidas').reduce((ss,r)=>ss+((entry.salidas?.[r.type]?.[k])||0),0), 0)}
+              </td>
+              {PLANILLA_CATS.map(c => {
+                const tot = SECTION_ROWS.filter(r=>r.section==='salidas').reduce((s,r)=>s+((entry.salidas?.[r.type]?.[c.key])||0),0);
+                return <td key={c.key} style={{ ...TD.style, color: tot > 0 ? '#ff6b6b' : '#2a2a2a', fontWeight: tot > 0 ? '700' : '400' }}>{tot > 0 ? tot : '·'}</td>;
+              })}
+            </tr>
+
+            {/* Cierre */}
+            <tr style={{ backgroundColor: '#0d1a0d', borderTop: '2px solid #333' }}>
+              <td style={{ padding: '5px 8px', fontWeight: '700', color: '#4caf50', fontSize: '0.78rem', position: 'sticky', left: 0, backgroundColor: '#0d1a0d', zIndex: 1, borderRight: '2px solid #222' }}>Cierre</td>
+              <td style={{ ...TD.style, color: '#4caf50', fontWeight: '700', fontSize: '0.78rem' }}>{totalStock(cierre)}</td>
+              {PLANILLA_CATS.map(c => {
+                const val = cierre[c.key] || 0;
+                return <td key={c.key} style={{ ...TD.style, color: val > 0 ? '#4caf50' : val < 0 ? '#ff4444' : '#2a2a2a', fontWeight: val > 0 ? '700' : '400' }}>{val !== 0 ? val : '·'}</td>;
+              })}
+            </tr>
+
+            {/* EV row */}
+            <tr style={{ backgroundColor: '#0a0f1a', borderBottom: '1px solid #1a1a1a' }}>
+              <td style={{ padding: '3px 8px', color: '#4fc3f7', fontSize: '0.68rem', fontWeight: '600', position: 'sticky', left: 0, backgroundColor: '#0a0f1a', zIndex: 1, borderRight: '2px solid #222' }}>EV total / EV/ha</td>
+              <td style={{ ...TD.style, color: '#4fc3f7', fontWeight: '700' }}>{evCierre.toFixed(0)}</td>
+              <td colSpan={PLANILLA_CATS.length} style={{ ...TD.style, color: '#81d4fa', fontWeight: '700', textAlign: 'left' }}>
+                {evHa} EV/ha  ·  {HA_ESTABLECIMIENTO} ha efectivas
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 // ─── Map View ─────────────────────────────────────────────────────────────────
 
 function MapView({ onPotreroClick, modoMover, ndviActive, ndviDate, ndviIndex, showBasemap, onHoverValue, ndviStats }) {
@@ -1291,27 +1637,7 @@ function App() {
 
   const totalAnimales = hacienda.reduce((sum, h) => sum + (h.cantidad || 0), 0);
 
-  const diasDesde = (isoDate) => {
-    if (!isoDate) return null;
-    return Math.floor((Date.now() - new Date(isoDate).getTime()) / 86400000);
-  };
 
-  const filasPlanilla = POSTREROS_GEOJSON.features.map(f => {
-    const nombre = f.properties.nombre;
-    const ha = f.properties.ha;
-    const asignadas = hacienda.filter(h => h.potrero === nombre);
-    const cabezas = asignadas.reduce((s, h) => s + (h.cantidad || 0), 0);
-    const kgTotales = asignadas.reduce((s, h) => s + (h.cantidad || 0) * (h.peso_promedio || 0), 0);
-    const cargaKgHa = ha > 0 ? Math.round(kgTotales / ha) : 0;
-    const ev = ha > 0 ? (kgTotales / 450 / ha).toFixed(2) : '—';
-    const fechaIngreso = asignadas.length > 0
-      ? asignadas.reduce((min, h) => (!min || h.fecha_ingreso < min ? h.fecha_ingreso : min), null)
-      : null;
-    const diasOcupacion = fechaIngreso ? diasDesde(fechaIngreso) : null;
-    const fechaSalida = historial[nombre]?.fecha_ultima_salida || null;
-    const diasDescanso = !fechaIngreso && fechaSalida ? diasDesde(fechaSalida) : null;
-    return { nombre, ha, asignadas, cabezas, cargaKgHa, ev, diasOcupacion, diasDescanso };
-  });
 
   if (!authReady) {
     return (
@@ -1618,45 +1944,7 @@ function App() {
 
           {/* ── PLANILLA section ── */}
           {activeSection === 'planilla' && (
-            <div style={{ flex: 1, overflow: 'auto', backgroundColor: '#0d0d0d' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem' }}>
-                <thead>
-                  <tr style={{ backgroundColor: '#111', position: 'sticky', top: 0, zIndex: 1 }}>
-                    {['Potrero', 'Ha', 'Hacienda asignada', 'Cabezas', 'Carga (kg/ha)', 'EV/ha', 'Días ocupación', 'Días descanso'].map(h => (
-                      <th key={h} style={{ padding: '0.6rem 0.75rem', textAlign: 'left', color: '#666', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.4px', fontSize: '0.7rem', borderBottom: '1px solid #222', whiteSpace: 'nowrap' }}>{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {filasPlanilla.map((fila, i) => (
-                    <tr
-                      key={fila.nombre}
-                      onClick={() => { setSelectedPotrero(POSTREROS_GEOJSON.features.find(f => f.properties.nombre === fila.nombre)?.properties); setActiveSection('mapa'); }}
-                      style={{ backgroundColor: selectedPotrero?.nombre === fila.nombre ? '#1e2e1e' : i % 2 === 0 ? '#0d0d0d' : '#111', cursor: 'pointer', borderBottom: '1px solid #181818' }}
-                    >
-                      <td style={{ padding: '0.5rem 0.75rem', fontWeight: '700', color: '#ffeb3b' }}>{fila.nombre}</td>
-                      <td style={{ padding: '0.5rem 0.75rem', color: '#666' }}>{fila.ha.toFixed(1)}</td>
-                      <td style={{ padding: '0.5rem 0.75rem', color: fila.asignadas.length ? '#fff' : '#333' }}>
-                        {fila.asignadas.length ? fila.asignadas.map(a => a.rodeo ? `${a.nombre} · ${a.rodeo}` : a.nombre).join(', ') : '—'}
-                      </td>
-                      <td style={{ padding: '0.5rem 0.75rem', color: fila.cabezas ? '#fff' : '#333', textAlign: 'right' }}>
-                        {fila.cabezas || '—'}
-                      </td>
-                      <td style={{ padding: '0.5rem 0.75rem', color: fila.cargaKgHa ? (fila.cargaKgHa > 600 ? '#ff6b6b' : '#4caf50') : '#333', textAlign: 'right', fontWeight: fila.cargaKgHa ? '600' : '400' }}>
-                        {fila.cargaKgHa ? fila.cargaKgHa.toLocaleString() : '—'}
-                      </td>
-                      <td style={{ padding: '0.5rem 0.75rem', color: fila.ev !== '—' ? '#fff' : '#333', textAlign: 'right' }}>{fila.ev}</td>
-                      <td style={{ padding: '0.5rem 0.75rem', color: fila.diasOcupacion !== null ? '#ffeb3b' : '#333', textAlign: 'right' }}>
-                        {fila.diasOcupacion !== null ? `${fila.diasOcupacion}d` : '—'}
-                      </td>
-                      <td style={{ padding: '0.5rem 0.75rem', color: fila.diasDescanso !== null ? '#4caf50' : '#333', textAlign: 'right' }}>
-                        {fila.diasDescanso !== null ? `${fila.diasDescanso}d` : '—'}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <PlanillaPanel db={db} />
           )}
 
         </div>
