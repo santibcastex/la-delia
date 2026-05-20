@@ -111,15 +111,6 @@ function getCatConsumoDiario(catNombre, mesIndex) {
   return CONSUMO_DIARIO[catNombre] ?? 10;
 }
 
-function potreroPoints() {
-  return POSTREROS_GEOJSON.features.map(f => {
-    const ring = f.geometry.coordinates[0][0];
-    const lat = ring.reduce((s, p) => s + p[1], 0) / ring.length;
-    const lon = ring.reduce((s, p) => s + p[0], 0) / ring.length;
-    return { nombre: f.properties.nombre, lat, lon };
-  });
-}
-
 // Full polygon geometry per potrero — for pixel-accurate NDVI mean over whole paddock
 function potreroPolygons() {
   return POSTREROS_GEOJSON.features.map(f => ({
