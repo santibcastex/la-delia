@@ -200,7 +200,7 @@ export default async function handler(req, res) {
     }
 
     res.setHeader('Content-Type', 'image/png');
-    res.setHeader('Cache-Control', 'public, max-age=86400');
+    res.setHeader('Cache-Control', 'public, max-age=21600');
     res.setHeader('X-Farm-Bounds', JSON.stringify(FARM_BOUNDS));
     res.status(200).send(Buffer.from(buf));
   } catch (err) {

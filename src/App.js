@@ -11,13 +11,15 @@ const getNdviDates = () => {
   const dates = [];
   const today = new Date();
   const todayStr = today.toISOString().slice(0, 10);
+  // Always include today first so the latest available image is accessible
+  dates.push(todayStr);
   for (let m = 0; m < 8; m++) {
     const d = new Date(today.getFullYear(), today.getMonth() - m, 1);
     const year = d.getFullYear();
     const month = String(d.getMonth() + 1).padStart(2, '0');
     ['21', '11', '01'].forEach(day => {
       const dateStr = `${year}-${month}-${day}`;
-      if (dateStr <= todayStr) dates.push(dateStr);
+      if (dateStr < todayStr) dates.push(dateStr);
     });
   }
   return dates;
