@@ -740,27 +740,29 @@ function ForrajePanel({ hacienda, historial }) {
 
                 {/* ── VALIDACIÓN ── */}
                 {(() => {
-                  const lastGeeYM = curvaMonths[curvaMonths.length - 1];
-                  const radVal = lastGeeYM ? radiation[lastGeeYM] : null;
+                  // Months present in both GEE CSV and Open-Meteo radiation
+                  const sharedMonths = curvaMonths.filter(ym => radiation[ym] != null).slice(-12);
+                  const valYM = validacion?.selectedYM ?? sharedMonths[sharedMonths.length - 1] ?? null;
+                  const radVal = valYM ? radiation[valYM] : null;
 
                   function runValidacion() {
-                    if (!lastGeeYM || loadingVal) return;
+                    if (!valYM || loadingVal) return;
                     setLoadingVal(true);
-                    const dateStr = lastGeeYM + '-21';
+                    const dateStr = valYM + '-21';
                     fetch('/api/forraje-ndvi', {
                       method: 'POST',
                       headers: { 'Content-Type': 'application/json' },
                       body: JSON.stringify({ points: potreroPoints(), index: 'NDVIc', dates: [dateStr] })
                     })
                       .then(r => r.json())
-                      .then(data => setValidacion({ ym: lastGeeYM, ndvi: data[lastGeeYM] || {} }))
-                      .catch(() => setValidacion({ ym: lastGeeYM, ndvi: {} }))
+                      .then(data => setValidacion({ selectedYM: valYM, fetchedYM: valYM, ndvi: data[valYM] || {} }))
+                      .catch(() => setValidacion(v => ({ ...v, fetchedYM: valYM, ndvi: {} })))
                       .finally(() => setLoadingVal(false));
                   }
 
-                  const rows = validacion && validacion.ym === lastGeeYM
+                  const rows = validacion?.fetchedYM === valYM
                     ? potreroNames.map(nombre => {
-                        const gee = byPotrero[nombre]?.[lastGeeYM] ?? null;
+                        const gee = byPotrero[nombre]?.[valYM] ?? null;
                         const ndvi = validacion.ndvi[nombre] ?? null;
                         const app = ndvi != null && radVal != null ? Math.round(calcMS(ndvi, radVal)) : null;
                         const diff = gee != null && app != null ? Math.round((app - gee) / gee * 100) : null;
@@ -770,27 +772,38 @@ function ForrajePanel({ hacienda, historial }) {
 
                   return (
                     <div style={{ marginTop: '1.5rem', borderTop: '1px solid #222', paddingTop: '1rem' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '0.75rem' }}>
-                        <span style={{ fontSize: '0.8rem', color: '#666', fontWeight: '600' }}>
-                          Validación modelo: app vs GEE para {lastGeeYM}
-                        </span>
-                        {radVal == null && (
-                          <span style={{ fontSize: '0.72rem', color: '#666' }}>
-                            (radiación de {lastGeeYM} no disponible aún)
-                          </span>
-                        )}
-                        <button onClick={runValidacion} disabled={loadingVal || !radVal} style={{
+                      <div style={{ fontSize: '0.8rem', color: '#666', fontWeight: '600', marginBottom: '0.6rem' }}>
+                        Validación: App (Copernicus + Open-Meteo) vs GEE (ERA5 + Sentinel-2)
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.75rem', flexWrap: 'wrap' }}>
+                        <span style={{ fontSize: '0.75rem', color: '#555' }}>Mes a comparar:</span>
+                        <select
+                          value={valYM ?? ''}
+                          onChange={e => setValidacion(v => ({ ...(v || {}), selectedYM: e.target.value, fetchedYM: null }))}
+                          style={{ backgroundColor: '#1a1a1a', color: '#ccc', border: '1px solid #333', borderRadius: '4px', padding: '0.25rem 0.5rem', fontSize: '0.78rem' }}
+                        >
+                          {sharedMonths.map(ym => (
+                            <option key={ym} value={ym}>{ym} (GEE + radiación disponibles)</option>
+                          ))}
+                        </select>
+                        <button onClick={runValidacion} disabled={loadingVal || !valYM} style={{
                           padding: '0.3rem 0.8rem', fontSize: '0.78rem', fontWeight: '600',
                           backgroundColor: loadingVal ? '#1a1a1a' : '#0f2a1a',
                           color: loadingVal ? '#444' : '#4caf50',
                           border: '1px solid #2a4a2a', borderRadius: '4px', cursor: loadingVal ? 'default' : 'pointer'
                         }}>
-                          {loadingVal ? '⏳ Consultando Copernicus...' : '▶ Validar vs GEE'}
+                          {loadingVal ? '⏳ Consultando Copernicus...' : '▶ Validar'}
                         </button>
+                        {sharedMonths.length === 0 && (
+                          <span style={{ fontSize: '0.72rem', color: '#666' }}>No hay meses con datos en ambas fuentes</span>
+                        )}
                       </div>
 
                       {rows && (
                         <>
+                          <div style={{ fontSize: '0.72rem', color: '#555', marginBottom: '0.5rem' }}>
+                            NDVI Copernicus del 21/{valYM} · Radiación Open-Meteo {valYM} · MS GEE pixel-a-pixel {valYM}
+                          </div>
                           <table style={{ borderCollapse: 'collapse', fontSize: '0.78rem', width: '100%', maxWidth: '580px' }}>
                             <thead>
                               <tr style={{ backgroundColor: '#1a1a1a' }}>
@@ -819,8 +832,7 @@ function ForrajePanel({ hacienda, historial }) {
                           {(() => {
                             const diffs = rows.map(r => r.diff).filter(d => d != null);
                             const avgDiff = diffs.length ? Math.round(diffs.reduce((s, d) => s + d, 0) / diffs.length) : null;
-                            const absDiffs = diffs.map(Math.abs);
-                            const avgAbsDiff = absDiffs.length ? Math.round(absDiffs.reduce((s, d) => s + d, 0) / absDiffs.length) : null;
+                            const avgAbsDiff = diffs.length ? Math.round(diffs.map(Math.abs).reduce((s, d) => s + d, 0) / diffs.length) : null;
                             return avgDiff != null ? (
                               <div style={{ marginTop: '0.6rem', fontSize: '0.75rem', color: '#666' }}>
                                 Diferencia media: <span style={{ color: Math.abs(avgDiff) < 10 ? '#4caf50' : '#ff9800', fontWeight: '700' }}>{avgDiff > 0 ? '+' : ''}{avgDiff}%</span>
