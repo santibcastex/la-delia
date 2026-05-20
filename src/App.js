@@ -374,6 +374,7 @@ function ForrajePanel({ hacienda, historial }) {
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [efficiency, setEfficiency] = useState(50);
   const [msData, setMsData] = useState(null); // parsed GEE CSV: {'YYYY-MM': {oferta_kg, ...}}
+  const [selectedYear, setSelectedYear] = useState(null); // for Por Potrero heatmap
 
   // Fetch radiation on mount
   useEffect(() => {
@@ -514,9 +515,13 @@ function ForrajePanel({ hacienda, historial }) {
     { id: 'descanso', label: 'Período Descanso' },
   ];
 
-  // Por Potrero: heatmap — last 18 months
-  const heatmapMonths = curvaMonths.slice(-18);
+  // Por Potrero: heatmap with year filter
   const byPotrero = msData?.byPotrero ?? {};
+  const availableYears = [...new Set(curvaMonths.map(ym => ym.slice(0, 4)))].sort();
+  const activeYear = selectedYear ?? availableYears[availableYears.length - 1] ?? null;
+  const heatmapMonths = activeYear
+    ? curvaMonths.filter(ym => ym.startsWith(activeYear))
+    : curvaMonths.slice(-18);
   const potreroNames = POSTREROS_GEOJSON.features
     .map(f => f.properties.nombre)
     .filter(n => byPotrero[n]);
@@ -662,8 +667,19 @@ function ForrajePanel({ hacienda, historial }) {
             )}
             {msData !== null && (
               <>
-                <div style={{ fontSize: '0.8rem', color: '#555', marginBottom: '1rem' }}>
-                  Producción MS (kg/ha/mes) por potrero · últimos 18 meses · escala: <span style={{ color: '#b44' }}>bajo</span> → <span style={{ color: '#8a8' }}>alto</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginBottom: '1rem', flexWrap: 'wrap' }}>
+                  {availableYears.map(y => (
+                    <button key={y} onClick={() => setSelectedYear(y)} style={{
+                      padding: '0.25rem 0.7rem', fontSize: '0.8rem', fontWeight: '600',
+                      backgroundColor: activeYear === y ? '#1a3a1a' : 'transparent',
+                      color: activeYear === y ? '#4caf50' : '#555',
+                      border: `1px solid ${activeYear === y ? '#4caf50' : '#2a2a2a'}`,
+                      borderRadius: '4px', cursor: 'pointer'
+                    }}>{y}</button>
+                  ))}
+                  <span style={{ fontSize: '0.72rem', color: '#444', marginLeft: '0.5rem' }}>
+                    escala: <span style={{ color: '#b44' }}>bajo</span> → <span style={{ color: '#8a8' }}>alto</span> (relativa al año)
+                  </span>
                 </div>
                 <div style={{ overflowX: 'auto' }}>
                   <table style={{ borderCollapse: 'collapse', fontSize: '0.75rem', minWidth: '100%' }}>
@@ -673,7 +689,7 @@ function ForrajePanel({ hacienda, historial }) {
                         <th style={{ padding: '0.4rem 0.5rem', textAlign: 'right', color: '#666', fontWeight: '600', whiteSpace: 'nowrap', borderBottom: '1px solid #2a2a2a' }}>Ha</th>
                         {heatmapMonths.map(ym => (
                           <th key={ym} style={{ padding: '0.4rem 0.4rem', textAlign: 'center', color: '#555', fontWeight: '500', whiteSpace: 'nowrap', borderBottom: '1px solid #2a2a2a', minWidth: '46px' }}>
-                            {ym.slice(5) + '/' + ym.slice(2, 4)}
+                            {activeYear ? ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'][parseInt(ym.slice(5),10)-1] : ym.slice(5)+'/'+ym.slice(2,4)}
                           </th>
                         ))}
                         <th style={{ padding: '0.4rem 0.5rem', textAlign: 'right', color: '#666', fontWeight: '600', whiteSpace: 'nowrap', borderBottom: '1px solid #2a2a2a' }}>Prom.</th>
