@@ -190,41 +190,170 @@ function makeNdviCanvasLayer(url, farmBoundsLL) {
 
 // ─── Forraje Panel ────────────────────────────────────────────────────────────
 
-function MsBarChart({ data, label = 'MS (kg/ha/mes)' }) {
-  if (!data || data.length === 0) return null;
-  const vals = data.map(d => d.value).filter(v => v != null);
-  if (vals.length === 0) return null;
-  const maxVal = Math.max(...vals, 1);
-  const chartH = 140;
-  const barW = Math.max(18, Math.floor(560 / data.length) - 3);
+function parseGeeCSV(text) {
+  // Returns {'YYYY-MM': {oferta_kg_total, oferta_ha_avg}} grouped by month
+  const lines = text.trim().split('\n');
+  const header = lines[0].split(',').map(h => h.trim());
+  const iDate = header.indexOf('fecha');
+  const iMsKgTotal = header.indexOf('ms_kg_total');
+  const iMsKgHa = header.indexOf('ms_kg_ha');
+  const iHa = header.indexOf('ha');
+  if (iDate < 0 || iMsKgTotal < 0) return {};
+  const monthly = {};
+  lines.slice(1).forEach(line => {
+    const cols = line.split(',');
+    const ym = (cols[iDate] || '').slice(0, 7);
+    if (!ym) return;
+    const msTotal = parseFloat(cols[iMsKgTotal]);
+    const msHa = iMsKgHa >= 0 ? parseFloat(cols[iMsKgHa]) : null;
+    const ha = iHa >= 0 ? parseFloat(cols[iHa]) : null;
+    if (!isNaN(msTotal)) {
+      if (!monthly[ym]) monthly[ym] = { oferta_kg: 0, ha_sum: 0, ha_weighted_ms: 0 };
+      monthly[ym].oferta_kg += msTotal;
+      if (ha && !isNaN(ha)) monthly[ym].ha_sum += ha;
+      if (msHa && !isNaN(msHa) && ha && !isNaN(ha)) monthly[ym].ha_weighted_ms += msHa * ha;
+    }
+  });
+  // Compute weighted avg kg/ha
+  Object.values(monthly).forEach(m => {
+    m.oferta_ha_avg = m.ha_sum > 0 ? m.ha_weighted_ms / m.ha_sum : 0;
+  });
+  return monthly;
+}
+
+function daysInMonth(ym) {
+  const [y, m] = ym.split('-').map(Number);
+  return new Date(y, m, 0).getDate();
+}
+
+function ComboChart({ months, ofertaKg, ofertaDispKg, demandaKg, efficiency = 50 }) {
+  const PAD_L = 70, PAD_R = 20, PAD_T = 18, PAD_B = 44;
+  const BAR_W = 18, GAP = 4;
+  const n = months.length;
+  const svgW = PAD_L + n * (BAR_W + GAP) + PAD_R;
+  const chartH = 160;
+  const svgH = PAD_T + chartH + PAD_B;
+
+  const allVals = [...ofertaKg, ...ofertaDispKg, ...demandaKg].filter(v => v != null && !isNaN(v));
+  if (allVals.length === 0) return <div style={{ color: '#555', padding: '2rem', textAlign: 'center' }}>Sin datos</div>;
+  const maxVal = Math.max(...allVals, 1);
+
+  const toY = v => PAD_T + chartH - (v / maxVal) * chartH;
+  const toX = i => PAD_L + i * (BAR_W + GAP);
+
+  const gridVals = [0, 0.25, 0.5, 0.75, 1].map(p => Math.round(p * maxVal));
+
+  const linePoints = (arr) => arr.map((v, i) => {
+    if (v == null || isNaN(v)) return null;
+    return `${toX(i) + BAR_W / 2},${toY(v)}`;
+  }).filter(Boolean).join(' ');
 
   return (
-    <div style={{ overflowX: 'auto' }}>
-      <svg viewBox={`0 0 ${data.length * (barW + 3) + 50} ${chartH + 50}`} style={{ width: '100%', height: `${chartH + 50}px` }}>
-        {/* Y gridlines */}
-        {[0, 0.25, 0.5, 0.75, 1].map(pct => {
-          const y = chartH - pct * chartH;
+    <div style={{ overflowX: 'auto', marginBottom: '0.5rem' }}>
+      <svg width={svgW} height={svgH} style={{ display: 'block' }}>
+        {/* Grid */}
+        {gridVals.map(v => {
+          const y = toY(v);
           return (
-            <g key={pct}>
-              <line x1={40} y1={y} x2={data.length * (barW + 3) + 44} y2={y} stroke="#2a2a2a" strokeWidth="1" />
-              <text x={36} y={y + 4} textAnchor="end" fontSize="9" fill="#555">{Math.round(pct * maxVal)}</text>
-            </g>
-          );
-        })}
-        {/* Bars */}
-        {data.map((d, i) => {
-          const barH = d.value != null ? (d.value / maxVal) * chartH : 0;
-          const x = 42 + i * (barW + 3);
-          const hue = d.value != null ? Math.round((d.value / maxVal) * 120) : 0;
-          return (
-            <g key={d.label}>
-              <rect x={x} y={chartH - barH} width={barW} height={barH} fill={`hsl(${hue},70%,40%)`} rx="2" />
-              <text x={x + barW / 2} y={chartH + 12} textAnchor="middle" fontSize="8" fill="#666" transform={`rotate(-45,${x + barW / 2},${chartH + 12})`}>{d.label}</text>
+            <g key={v}>
+              <line x1={PAD_L} y1={y} x2={svgW - PAD_R} y2={y} stroke="#222" strokeWidth="1" />
+              <text x={PAD_L - 5} y={y + 4} textAnchor="end" fontSize="9" fill="#555">
+                {v >= 1000 ? `${(v / 1000).toFixed(0)}k` : v}
+              </text>
             </g>
           );
         })}
         {/* Y axis label */}
-        <text x={10} y={chartH / 2} textAnchor="middle" fontSize="9" fill="#555" transform={`rotate(-90,10,${chartH / 2})`}>{label}</text>
+        <text x={12} y={PAD_T + chartH / 2} textAnchor="middle" fontSize="9" fill="#555"
+          transform={`rotate(-90,12,${PAD_T + chartH / 2})`}>kg MS</text>
+        {/* Bars (oferta total) */}
+        {ofertaKg.map((v, i) => {
+          if (v == null || isNaN(v)) return null;
+          const barH = (v / maxVal) * chartH;
+          return <rect key={i} x={toX(i)} y={toY(v)} width={BAR_W} height={barH} fill="#1e4d2b" rx="1" />;
+        })}
+        {/* Line: oferta disponible */}
+        {ofertaDispKg.some(v => v != null) && (
+          <polyline points={linePoints(ofertaDispKg)} fill="none" stroke="#4caf50" strokeWidth="2" strokeLinejoin="round" />
+        )}
+        {/* Line: demanda */}
+        {demandaKg.some(v => v != null) && (
+          <polyline points={linePoints(demandaKg)} fill="none" stroke="#f44336" strokeWidth="2"
+            strokeDasharray="6,3" strokeLinejoin="round" />
+        )}
+        {/* X labels */}
+        {months.map((ym, i) => (
+          <text key={ym} x={toX(i) + BAR_W / 2} y={PAD_T + chartH + 14}
+            textAnchor="middle" fontSize="8" fill="#555"
+            transform={`rotate(-45,${toX(i) + BAR_W / 2},${PAD_T + chartH + 14})`}>
+            {ym.slice(5) + '/' + ym.slice(2, 4)}
+          </text>
+        ))}
+        {/* Legend */}
+        <rect x={PAD_L} y={4} width={10} height={8} fill="#1e4d2b" rx="1" />
+        <text x={PAD_L + 13} y={11} fontSize="8" fill="#888">Oferta total</text>
+        <line x1={PAD_L + 70} y1={8} x2={PAD_L + 82} y2={8} stroke="#4caf50" strokeWidth="2" />
+        <text x={PAD_L + 85} y={11} fontSize="8" fill="#4caf50">Disponible ({efficiency}%)</text>
+        <line x1={PAD_L + 160} y1={8} x2={PAD_L + 172} y2={8} stroke="#f44336" strokeWidth="2" strokeDasharray="4,2" />
+        <text x={PAD_L + 175} y={11} fontSize="8" fill="#f44336">Demanda</text>
+      </svg>
+    </div>
+  );
+}
+
+function BalanceChart({ months, balanceKg }) {
+  const PAD_L = 70, PAD_R = 20, PAD_T = 14, PAD_B = 44;
+  const BAR_W = 18, GAP = 4;
+  const n = months.length;
+  const svgW = PAD_L + n * (BAR_W + GAP) + PAD_R;
+  const chartH = 100;
+  const svgH = PAD_T + chartH + PAD_B;
+
+  const vals = balanceKg.filter(v => v != null && !isNaN(v));
+  if (vals.length === 0) return null;
+  const maxAbs = Math.max(...vals.map(Math.abs), 1);
+
+  const zeroY = PAD_T + chartH / 2;
+  const toY = v => zeroY - (v / maxAbs) * (chartH / 2);
+
+  return (
+    <div style={{ overflowX: 'auto' }}>
+      <svg width={svgW} height={svgH} style={{ display: 'block' }}>
+        {/* Zero line */}
+        <line x1={PAD_L} y1={zeroY} x2={svgW - PAD_R} y2={zeroY} stroke="#444" strokeWidth="1" />
+        {/* Y labels */}
+        {[1, 0, -1].map(s => {
+          const v = s * maxAbs;
+          const y = toY(v);
+          return (
+            <g key={s}>
+              <line x1={PAD_L} y1={y} x2={svgW - PAD_R} y2={y} stroke="#1a1a1a" strokeWidth="1" />
+              <text x={PAD_L - 5} y={y + 4} textAnchor="end" fontSize="9" fill="#555">
+                {v >= 1000 ? `${(v / 1000).toFixed(0)}k` : v >= 0 ? `+${v}` : `${v}`}
+              </text>
+            </g>
+          );
+        })}
+        {/* Y label */}
+        <text x={12} y={PAD_T + chartH / 2} textAnchor="middle" fontSize="9" fill="#555"
+          transform={`rotate(-90,12,${PAD_T + chartH / 2})`}>Balance</text>
+        {/* Bars */}
+        {balanceKg.map((v, i) => {
+          if (v == null || isNaN(v)) return null;
+          const y1 = Math.min(zeroY, toY(v));
+          const y2 = Math.max(zeroY, toY(v));
+          const h = Math.max(1, y2 - y1);
+          return <rect key={i} x={PAD_L + i * (BAR_W + GAP)} y={y1} width={BAR_W} height={h}
+            fill={v >= 0 ? '#2e7d32' : '#c62828'} rx="1" />;
+        })}
+        {/* X labels */}
+        {months.map((ym, i) => (
+          <text key={ym} x={PAD_L + i * (BAR_W + GAP) + BAR_W / 2} y={PAD_T + chartH + 14}
+            textAnchor="middle" fontSize="8" fill="#555"
+            transform={`rotate(-45,${PAD_L + i * (BAR_W + GAP) + BAR_W / 2},${PAD_T + chartH + 14})`}>
+            {ym.slice(5) + '/' + ym.slice(2, 4)}
+          </text>
+        ))}
       </svg>
     </div>
   );
@@ -238,6 +367,7 @@ function ForrajePanel({ hacienda, historial }) {
   const [ndviHistory, setNdviHistory] = useState(null); // null = not yet loaded
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [efficiency, setEfficiency] = useState(50);
+  const [msData, setMsData] = useState(null); // parsed GEE CSV: {'YYYY-MM': {oferta_kg, ...}}
 
   // Fetch radiation on mount
   useEffect(() => {
@@ -245,6 +375,14 @@ function ForrajePanel({ hacienda, historial }) {
       .then(r => r.json())
       .then(setRadiation)
       .catch(() => {});
+  }, []);
+
+  // Fetch GEE CSV on mount
+  useEffect(() => {
+    fetch('/ms_mensual.csv')
+      .then(r => r.text())
+      .then(text => setMsData(parseGeeCSV(text)))
+      .catch(() => setMsData({}));
   }, []);
 
   // Fetch current NDVI for all potreros on mount (independent of map)
@@ -304,19 +442,24 @@ function ForrajePanel({ hacienda, historial }) {
     return 1;
   });
 
-  // Curva forrajera: monthly farm average MS (kg/ha/month)
-  const curvaData = Object.keys(radiation).sort().slice(-12).map(ym => {
-    const rad = radiation[ym];
-    // Use ndviHistory if available, else use ndviStats for current month
-    let ndviVals = [];
-    if (ndviHistory && ndviHistory[ym]) {
-      ndviVals = Object.values(ndviHistory[ym]).filter(v => v != null);
-    } else if (ym === currentYM) {
-      ndviVals = Object.values(ndviCurrent).filter(v => v != null);
-    }
-    const avgNdvi = ndviVals.length > 0 ? ndviVals.reduce((s, v) => s + v, 0) / ndviVals.length : null;
-    const ms = avgNdvi != null && rad != null ? calcMS(avgNdvi, rad) : null;
-    return { label: ym.slice(5) + '/' + ym.slice(2, 4), value: ms };
+  // Curva forrajera: GEE CSV data (oferta) + hacienda demand
+  const curvaMonths = msData ? Object.keys(msData).sort() : [];
+  const curvaOfertaKg = curvaMonths.map(ym => msData[ym]?.oferta_kg ?? null);
+  const curvaOfertaDispKg = curvaMonths.map(ym => {
+    const v = msData?.[ym]?.oferta_kg;
+    return v != null ? v * (efficiency / 100) : null;
+  });
+  const curvaDemandaKg = curvaMonths.map(ym => {
+    const mesIndex = parseInt(ym.slice(5), 10) - 1;
+    const dias = daysInMonth(ym);
+    return hacienda.reduce((sum, cat) => {
+      return sum + (cat.cantidad || 0) * getCatConsumoDiario(cat.nombre, mesIndex) * dias;
+    }, 0);
+  });
+  const curvaBalanceKg = curvaMonths.map((ym, i) => {
+    const disp = curvaOfertaDispKg[i];
+    const dem = curvaDemandaKg[i];
+    return disp != null && dem != null ? disp - dem : null;
   });
 
   // Período de descanso: per resting potrero, accumulated MS since last exit
@@ -445,23 +588,38 @@ function ForrajePanel({ hacienda, historial }) {
         {/* ── CURVA FORRAJERA ── */}
         {activeTab === 'curva' && (
           <div>
-            {loadingHistory && (
+            {msData === null && (
               <div style={{ padding: '2rem', textAlign: 'center', color: '#555', fontSize: '0.85rem' }}>
-                Descargando NDVI histórico (12 meses × 20 potreros)...
+                Cargando datos GEE...
               </div>
             )}
-            {!loadingHistory && (
+            {msData !== null && curvaMonths.length === 0 && (
+              <div style={{ padding: '1.5rem', textAlign: 'center', color: '#444', fontSize: '0.85rem' }}>
+                No se encontraron datos en /ms_mensual.csv
+              </div>
+            )}
+            {msData !== null && curvaMonths.length > 0 && (
               <>
-                <div style={{ fontSize: '0.8rem', color: '#555', marginBottom: '1rem' }}>
-                  Producción media de MS (kg/ha/mes) · promedio campo · eficiencia {efficiency}%
+                <div style={{ fontSize: '0.8rem', color: '#555', marginBottom: '0.75rem' }}>
+                  Oferta total campo (kg MS) · eficiencia {efficiency}% · vs demanda hacienda actual
                 </div>
-                <MsBarChart data={curvaData} label="kg/ha/mes" />
-                {curvaData.every(d => d.value == null) && (
-                  <div style={{ padding: '1.5rem', textAlign: 'center', color: '#444', fontSize: '0.85rem' }}>
-                    Los datos históricos se cargan la primera vez que abrís esta pestaña.<br />
-                    El proceso tarda ~15 segundos.
-                  </div>
-                )}
+                <div style={{ fontSize: '0.75rem', color: '#444', marginBottom: '1rem' }}>
+                  Barras: oferta bruta &nbsp;|&nbsp; <span style={{ color: '#4caf50' }}>— oferta disponible</span> &nbsp;|&nbsp; <span style={{ color: '#f44336' }}>- - demanda</span>
+                </div>
+                <ComboChart
+                  months={curvaMonths}
+                  ofertaKg={curvaOfertaKg}
+                  ofertaDispKg={curvaOfertaDispKg}
+                  demandaKg={curvaDemandaKg}
+                  efficiency={efficiency}
+                />
+                <div style={{ fontSize: '0.8rem', color: '#777', margin: '1.25rem 0 0.5rem' }}>
+                  Balance oferta disponible – demanda (kg MS)
+                </div>
+                <BalanceChart months={curvaMonths} balanceKg={curvaBalanceKg} />
+                <div style={{ marginTop: '0.75rem', fontSize: '0.72rem', color: '#444' }}>
+                  Fuente: Google Earth Engine · Monteith (1972) · ERA5 + Sentinel-2 L2A 2020–2025
+                </div>
               </>
             )}
           </div>
