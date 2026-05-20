@@ -375,6 +375,8 @@ function ForrajePanel({ hacienda, historial }) {
   const [efficiency, setEfficiency] = useState(50);
   const [msData, setMsData] = useState(null); // parsed GEE CSV: {'YYYY-MM': {oferta_kg, ...}}
   const [selectedYear, setSelectedYear] = useState(null); // for Por Potrero heatmap
+  const [validacion, setValidacion] = useState(null);     // {ym, ndvi: {nombre: val}}
+  const [loadingVal, setLoadingVal] = useState(false);
 
   // Fetch radiation on mount
   useEffect(() => {
@@ -735,6 +737,103 @@ function ForrajePanel({ hacienda, historial }) {
                 <div style={{ marginTop: '0.75rem', fontSize: '0.72rem', color: '#444' }}>
                   Fuente: Google Earth Engine · Monteith (1972) · ERA5 + Sentinel-2 L2A
                 </div>
+
+                {/* ── VALIDACIÓN ── */}
+                {(() => {
+                  const lastGeeYM = curvaMonths[curvaMonths.length - 1];
+                  const radVal = lastGeeYM ? radiation[lastGeeYM] : null;
+
+                  function runValidacion() {
+                    if (!lastGeeYM || loadingVal) return;
+                    setLoadingVal(true);
+                    const dateStr = lastGeeYM + '-21';
+                    fetch('/api/forraje-ndvi', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ points: potreroPoints(), index: 'NDVIc', dates: [dateStr] })
+                    })
+                      .then(r => r.json())
+                      .then(data => setValidacion({ ym: lastGeeYM, ndvi: data[lastGeeYM] || {} }))
+                      .catch(() => setValidacion({ ym: lastGeeYM, ndvi: {} }))
+                      .finally(() => setLoadingVal(false));
+                  }
+
+                  const rows = validacion && validacion.ym === lastGeeYM
+                    ? potreroNames.map(nombre => {
+                        const gee = byPotrero[nombre]?.[lastGeeYM] ?? null;
+                        const ndvi = validacion.ndvi[nombre] ?? null;
+                        const app = ndvi != null && radVal != null ? Math.round(calcMS(ndvi, radVal)) : null;
+                        const diff = gee != null && app != null ? Math.round((app - gee) / gee * 100) : null;
+                        return { nombre, gee, app, ndvi, diff };
+                      })
+                    : null;
+
+                  return (
+                    <div style={{ marginTop: '1.5rem', borderTop: '1px solid #222', paddingTop: '1rem' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '0.75rem' }}>
+                        <span style={{ fontSize: '0.8rem', color: '#666', fontWeight: '600' }}>
+                          Validación modelo: app vs GEE para {lastGeeYM}
+                        </span>
+                        {radVal == null && (
+                          <span style={{ fontSize: '0.72rem', color: '#666' }}>
+                            (radiación de {lastGeeYM} no disponible aún)
+                          </span>
+                        )}
+                        <button onClick={runValidacion} disabled={loadingVal || !radVal} style={{
+                          padding: '0.3rem 0.8rem', fontSize: '0.78rem', fontWeight: '600',
+                          backgroundColor: loadingVal ? '#1a1a1a' : '#0f2a1a',
+                          color: loadingVal ? '#444' : '#4caf50',
+                          border: '1px solid #2a4a2a', borderRadius: '4px', cursor: loadingVal ? 'default' : 'pointer'
+                        }}>
+                          {loadingVal ? '⏳ Consultando Copernicus...' : '▶ Validar vs GEE'}
+                        </button>
+                      </div>
+
+                      {rows && (
+                        <>
+                          <table style={{ borderCollapse: 'collapse', fontSize: '0.78rem', width: '100%', maxWidth: '580px' }}>
+                            <thead>
+                              <tr style={{ backgroundColor: '#1a1a1a' }}>
+                                {['Potrero', 'NDVIc', 'App (kg/ha)', 'GEE (kg/ha)', 'Diferencia'].map(h => (
+                                  <th key={h} style={{ padding: '0.4rem 0.75rem', textAlign: h === 'Potrero' ? 'left' : 'right', color: '#666', fontWeight: '600', fontSize: '0.7rem', textTransform: 'uppercase', borderBottom: '1px solid #2a2a2a' }}>{h}</th>
+                                ))}
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {rows.map((r, i) => {
+                                const diffColor = r.diff == null ? '#444' : Math.abs(r.diff) < 10 ? '#4caf50' : Math.abs(r.diff) < 25 ? '#ff9800' : '#f44336';
+                                return (
+                                  <tr key={r.nombre} style={{ backgroundColor: i % 2 === 0 ? '#111' : '#131313' }}>
+                                    <td style={{ padding: '0.35rem 0.75rem', color: '#ffeb3b', fontWeight: '700' }}>{r.nombre}</td>
+                                    <td style={{ padding: '0.35rem 0.75rem', textAlign: 'right', color: '#4caf50' }}>{r.ndvi != null ? r.ndvi.toFixed(3) : '—'}</td>
+                                    <td style={{ padding: '0.35rem 0.75rem', textAlign: 'right', color: '#fff' }}>{r.app != null ? r.app.toLocaleString() : '—'}</td>
+                                    <td style={{ padding: '0.35rem 0.75rem', textAlign: 'right', color: '#aaa' }}>{r.gee != null ? r.gee.toLocaleString() : '—'}</td>
+                                    <td style={{ padding: '0.35rem 0.75rem', textAlign: 'right', color: diffColor, fontWeight: '700' }}>
+                                      {r.diff != null ? `${r.diff > 0 ? '+' : ''}${r.diff}%` : '—'}
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                          {(() => {
+                            const diffs = rows.map(r => r.diff).filter(d => d != null);
+                            const avgDiff = diffs.length ? Math.round(diffs.reduce((s, d) => s + d, 0) / diffs.length) : null;
+                            const absDiffs = diffs.map(Math.abs);
+                            const avgAbsDiff = absDiffs.length ? Math.round(absDiffs.reduce((s, d) => s + d, 0) / absDiffs.length) : null;
+                            return avgDiff != null ? (
+                              <div style={{ marginTop: '0.6rem', fontSize: '0.75rem', color: '#666' }}>
+                                Diferencia media: <span style={{ color: Math.abs(avgDiff) < 10 ? '#4caf50' : '#ff9800', fontWeight: '700' }}>{avgDiff > 0 ? '+' : ''}{avgDiff}%</span>
+                                &nbsp;· Error absoluto medio: <span style={{ color: '#aaa', fontWeight: '700' }}>{avgAbsDiff}%</span>
+                                &nbsp;· <span style={{ color: '#444' }}>Verde &lt;10% · Naranja &lt;25% · Rojo ≥25%</span>
+                              </div>
+                            ) : null;
+                          })()}
+                        </>
+                      )}
+                    </div>
+                  );
+                })()}
               </>
             )}
           </div>
