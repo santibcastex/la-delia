@@ -120,6 +120,14 @@ function potreroPoints() {
   });
 }
 
+// Full polygon geometry per potrero — for pixel-accurate NDVI mean over whole paddock
+function potreroPolygons() {
+  return POSTREROS_GEOJSON.features.map(f => ({
+    nombre: f.properties.nombre,
+    coordinates: f.geometry.coordinates[0][0] // outer ring [[lon,lat],...]
+  }));
+}
+
 // Canvas layer: clips NDVI image to exact polygon outline
 function makeNdviCanvasLayer(url, farmBoundsLL) {
   const layer = {
@@ -401,7 +409,7 @@ function ForrajePanel({ hacienda, historial }) {
     fetch('/api/ndvi-stats', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ points: potreroPoints(), index: 'NDVIc', date: currentDate })
+      body: JSON.stringify({ polygons: potreroPolygons(), index: 'NDVIc', date: currentDate })
     })
       .then(r => r.json())
       .then(setNdviCurrent)
@@ -416,7 +424,7 @@ function ForrajePanel({ hacienda, historial }) {
       fetch('/api/forraje-ndvi', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ points: potreroPoints(), index: 'NDVIc', dates })
+        body: JSON.stringify({ polygons: potreroPolygons(), index: 'NDVIc', dates })
       })
         .then(r => r.json())
         .then(setNdviHistory)
@@ -755,7 +763,7 @@ function ForrajePanel({ hacienda, historial }) {
                   async function runMultiVal() {
                     if (!selMonths.length || validacion.running) return;
                     setValidacion({ results: {}, running: true, progress: 0, total: selMonths.length });
-                    const points = potreroPoints();
+                    const points = potreroPolygons();
                     for (let i = 0; i < selMonths.length; i++) {
                       const ym = selMonths[i];
                       try {
@@ -1171,16 +1179,10 @@ function App() {
 
   useEffect(() => {
     if (!showNDVI || !ndviDate || ndviIndex === 'NATURAL') { setNdviStats({}); return; }
-    const points = POSTREROS_GEOJSON.features.map(f => {
-      const ring = f.geometry.coordinates[0][0];
-      const lat = ring.reduce((s, p) => s + p[1], 0) / ring.length;
-      const lon = ring.reduce((s, p) => s + p[0], 0) / ring.length;
-      return { nombre: f.properties.nombre, lat, lon };
-    });
     fetch('/api/ndvi-stats', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ points, index: ndviIndex, date: ndviDate })
+      body: JSON.stringify({ polygons: potreroPolygons(), index: ndviIndex, date: ndviDate })
     }).then(r => r.json()).then(setNdviStats).catch(() => {});
   }, [showNDVI, ndviDate, ndviIndex]);
 

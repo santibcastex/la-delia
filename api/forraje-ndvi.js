@@ -62,16 +62,37 @@ async function getToken() {
   return (await res.json()).access_token;
 }
 
+function polygonDimensions(ring) {
+  const lons = ring.map(p => p[0]), lats = ring.map(p => p[1]);
+  const dLon = Math.max(...lons) - Math.min(...lons);
+  const dLat = Math.max(...lats) - Math.min(...lats);
+  const R = 6371000, latMid = (Math.max(...lats) + Math.min(...lats)) / 2;
+  const wm = dLon * Math.PI / 180 * R * Math.cos(latMid * Math.PI / 180);
+  const hm = dLat * Math.PI / 180 * R;
+  return { w: Math.max(24, Math.min(256, Math.round(wm / 20))), h: Math.max(24, Math.min(256, Math.round(hm / 20))) };
+}
+
 async function fetchPointNdvi(token, point, evalscript, index, timeFrom, timeTo) {
-  const SIZE = 7, HALF_M = 200;
-  const [cx, cy] = latLonToMercator(point.lon, point.lat);
-  const bbox = [cx - HALF_M, cy - HALF_M, cx + HALF_M, cy + HALF_M];
+  let boundsObj, w, h;
+  if (point.coordinates) {
+    const dims = polygonDimensions(point.coordinates);
+    w = dims.w; h = dims.h;
+    boundsObj = {
+      geometry: { type: 'Polygon', coordinates: [point.coordinates] },
+      properties: { crs: 'http://www.opengis.net/def/crs/OGC/1.3/CRS84' }
+    };
+  } else {
+    const SIZE = 7, HALF_M = 200;
+    const [cx, cy] = latLonToMercator(point.lon, point.lat);
+    w = SIZE; h = SIZE;
+    boundsObj = { bbox: [cx - HALF_M, cy - HALF_M, cx + HALF_M, cy + HALF_M], properties: { crs: 'http://www.opengis.net/def/crs/EPSG/0/3857' } };
+  }
   const body = {
     input: {
-      bounds: { bbox, properties: { crs: 'http://www.opengis.net/def/crs/EPSG/0/3857' } },
+      bounds: boundsObj,
       data: [{ type: 'sentinel-2-l2a', dataFilter: { timeRange: { from: timeFrom, to: timeTo }, maxCloudCoverage: 100, mosaickingOrder: 'leastCC' } }]
     },
-    output: { width: SIZE, height: SIZE, responses: [{ identifier: 'default', format: { type: 'image/png' } }] },
+    output: { width: w, height: h, responses: [{ identifier: 'default', format: { type: 'image/png' } }] },
     evalscript
   };
   try {

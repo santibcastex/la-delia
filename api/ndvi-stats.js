@@ -1,6 +1,5 @@
 import zlib from 'zlib';
 
-// Same VALUE_EVALSCRIPTS as ndvi-value.js (encodes index in R channel)
 const VALUE_EVALSCRIPTS = {
   NDVI:  `//VERSION=3\nfunction setup(){return{input:[{bands:["B04","B08","dataMask"]}],output:{bands:4,sampleType:"UINT8"}}}\nfunction evaluatePixel(s){if(!s.dataMask)return[0,0,0,0];const v=(s.B08-s.B04)/(s.B08+s.B04+1e-10);return[Math.round((v+1)/2*254),0,0,255];}`,
   NDVIc: `//VERSION=3\nfunction setup(){return{input:[{bands:["B04","B08","dataMask"]}],output:{bands:4,sampleType:"UINT8"}}}\nfunction evaluatePixel(s){if(!s.dataMask)return[0,0,0,0];const v=(s.B08-s.B04)/(s.B08+s.B04+1e-10);return[Math.round((v+1)/2*254),0,0,255];}`,
@@ -11,11 +10,6 @@ const VALUE_EVALSCRIPTS = {
   NDMI:  `//VERSION=3\nfunction setup(){return{input:[{bands:["B08","B11","dataMask"]}],output:{bands:4,sampleType:"UINT8"}}}\nfunction evaluatePixel(s){if(!s.dataMask)return[0,0,0,0];const v=(s.B08-s.B11)/(s.B08+s.B11+1e-10);return[Math.round((v+1)/2*254),0,0,255];}`,
   NDWI:  `//VERSION=3\nfunction setup(){return{input:[{bands:["B03","B08","dataMask"]}],output:{bands:4,sampleType:"UINT8"}}}\nfunction evaluatePixel(s){if(!s.dataMask)return[0,0,0,0];const v=(s.B03-s.B08)/(s.B03+s.B08+1e-10);return[Math.round((v+1)/2*254),0,0,255];}`,
 };
-
-function latLonToMercator(lon, lat) {
-  const R = 6378137;
-  return [lon * Math.PI / 180 * R, Math.log(Math.tan(Math.PI / 4 + lat * Math.PI / 360)) * R];
-}
 
 function parsePng(buf) {
   let offset = 8, width = 0, height = 0;
@@ -32,7 +26,6 @@ function parsePng(buf) {
   return { width, height, idatChunks };
 }
 
-// Average all valid pixels in the PNG (all pixels with A>0)
 function decodeMeanValue(buf, index) {
   const { width, height, idatChunks } = parsePng(buf);
   const raw = zlib.inflateSync(Buffer.concat(idatChunks));
@@ -49,6 +42,23 @@ function decodeMeanValue(buf, index) {
     }
   }
   return count > 0 ? sum / count : null;
+}
+
+// Compute output image dimensions for a polygon, targeting ~20m/pixel, clamped 24–256
+function polygonDimensions(ring) {
+  const lons = ring.map(p => p[0]);
+  const lats = ring.map(p => p[1]);
+  const dLon = Math.max(...lons) - Math.min(...lons);
+  const dLat = Math.max(...lats) - Math.min(...lats);
+  const R = 6371000;
+  const latMid = (Math.max(...lats) + Math.min(...lats)) / 2;
+  const wm = dLon * Math.PI / 180 * R * Math.cos(latMid * Math.PI / 180);
+  const hm = dLat * Math.PI / 180 * R;
+  const TARGET = 20;
+  return {
+    w: Math.max(24, Math.min(256, Math.round(wm / TARGET))),
+    h: Math.max(24, Math.min(256, Math.round(hm / TARGET)))
+  };
 }
 
 async function getToken() {
@@ -74,10 +84,13 @@ export default async function handler(req, res) {
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') return res.status(405).end();
 
-  const { points, index: indexRaw, date } = req.body;
+  const { points, polygons, index: indexRaw, date } = req.body;
   const INDEX = (indexRaw || 'NDVIc').toUpperCase().replace('NDVIC', 'NDVIc');
   const evalscript = VALUE_EVALSCRIPTS[INDEX];
-  if (!evalscript || !Array.isArray(points)) return res.status(400).json({ error: 'params invalid' });
+
+  // Accept either polygons (preferred) or legacy points
+  const items = polygons || points;
+  if (!evalscript || !Array.isArray(items)) return res.status(400).json({ error: 'params invalid' });
 
   let timeFrom, timeTo;
   if (date) {
@@ -97,21 +110,47 @@ export default async function handler(req, res) {
   const token = await getToken();
   if (!token) return res.status(502).json({ error: 'No token' });
 
-  // 7×7 pixel bbox, 200m radius around centroid → better mean than single pixel
-  const SIZE = 7;
-  const HALF_M = 200;
+  const results = await Promise.all(items.map(async (item) => {
+    const nombre = item.nombre;
 
-  const results = await Promise.all(points.map(async ({ nombre, lat, lon }) => {
-    const [cx, cy] = latLonToMercator(lon, lat);
-    const bbox = [cx - HALF_M, cy - HALF_M, cx + HALF_M, cy + HALF_M];
+    let boundsObj, w, h;
+
+    if (item.coordinates) {
+      // Full polygon geometry — use actual ring for pixel-accurate mean
+      const ring = item.coordinates; // [[lon,lat], ...]
+      const dims = polygonDimensions(ring);
+      w = dims.w;
+      h = dims.h;
+      boundsObj = {
+        geometry: {
+          type: 'Polygon',
+          coordinates: [ring]
+        },
+        properties: { crs: 'http://www.opengis.net/def/crs/OGC/1.3/CRS84' }
+      };
+    } else {
+      // Legacy fallback: centroid + 200m bbox
+      const { lat, lon } = item;
+      const R = 6378137;
+      const cx = lon * Math.PI / 180 * R;
+      const cy = Math.log(Math.tan(Math.PI / 4 + lat * Math.PI / 360)) * R;
+      const HALF = 200;
+      w = 7; h = 7;
+      boundsObj = {
+        bbox: [cx - HALF, cy - HALF, cx + HALF, cy + HALF],
+        properties: { crs: 'http://www.opengis.net/def/crs/EPSG/0/3857' }
+      };
+    }
+
     const body = {
       input: {
-        bounds: { bbox, properties: { crs: 'http://www.opengis.net/def/crs/EPSG/0/3857' } },
+        bounds: boundsObj,
         data: [{ type: 'sentinel-2-l2a', dataFilter: { timeRange: { from: timeFrom, to: timeTo }, maxCloudCoverage: 100, mosaickingOrder: 'leastCC' } }]
       },
-      output: { width: SIZE, height: SIZE, responses: [{ identifier: 'default', format: { type: 'image/png' } }] },
+      output: { width: w, height: h, responses: [{ identifier: 'default', format: { type: 'image/png' } }] },
       evalscript
     };
+
     try {
       const up = await fetch('https://sh.dataspace.copernicus.eu/api/v1/process', {
         method: 'POST',
@@ -121,7 +160,7 @@ export default async function handler(req, res) {
       if (!up.headers.get('content-type')?.includes('image/')) return { nombre, value: null };
       const value = decodeMeanValue(Buffer.from(await up.arrayBuffer()), INDEX);
       return { nombre, value: value !== null ? parseFloat(value.toFixed(3)) : null };
-    } catch (e) {
+    } catch {
       return { nombre, value: null };
     }
   }));
