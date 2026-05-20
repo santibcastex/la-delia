@@ -1104,6 +1104,31 @@ function PlanillaPanel({ db }) {
     setEditCell(null);
   };
 
+  const agregarMes = async () => {
+    const lastYM = months[months.length - 1];
+    if (!lastYM) return;
+    const [y, m] = lastYM.split('-').map(Number);
+    const nextM = m === 12 ? 1 : m + 1;
+    const nextY = m === 12 ? y + 1 : y;
+    const nextYM = `${nextY}-${String(nextM).padStart(2, '0')}`;
+    if (planillaData[nextYM]) { setSelectedYM(nextYM); return; }
+
+    // Apertura del mes nuevo = cierre del último mes
+    const lastEntry = planillaData[lastYM];
+    const lastCierre = calcCierre(lastEntry.apertura || {}, lastEntry.entradas || {}, lastEntry.salidas || {});
+
+    const emptyMoves = () => Object.fromEntries(PLANILLA_KEYS.map(k => [k, 0]));
+    const newEntry = {
+      ym: nextYM,
+      apertura: { ...lastCierre },
+      entradas: { nacimientos: emptyMoves(), traslados: emptyMoves(), compras: emptyMoves(), recuento: emptyMoves(), clasificacion: emptyMoves() },
+      salidas:  { mortandad: emptyMoves(), traslados: emptyMoves(), ventas: emptyMoves(), consumo: emptyMoves(), recuento: emptyMoves(), clasificacion: emptyMoves() },
+    };
+    await setDoc(doc(db, 'planilla_mensual', nextYM), newEntry);
+    setPlanillaData(prev => ({ ...prev, [nextYM]: newEntry }));
+    setSelectedYM(nextYM);
+  };
+
   const TD = { style: { padding: '3px 6px', textAlign: 'right', fontSize: '0.72rem', borderRight: '1px solid #1a1a1a', minWidth: '38px', cursor: 'pointer', userSelect: 'none' } };
   const TH_CAT = { style: { padding: '4px 5px', fontSize: '0.62rem', fontWeight: '600', color: '#888', textAlign: 'right', borderRight: '1px solid #1a1a1a', whiteSpace: 'nowrap', maxWidth: '62px', overflow: 'hidden', letterSpacing: '0.2px' } };
 
@@ -1202,7 +1227,13 @@ function PlanillaPanel({ db }) {
           <span style={{ fontSize: '0.8rem', color: '#aaa' }}>Cierre: <strong style={{ color: '#4caf50' }}>{totalStock(cierre)}</strong></span>
           <span style={{ fontSize: '0.8rem', color: '#aaa' }}>EV/ha: <strong style={{ color: '#81d4fa' }}>{evHa}</strong></span>
         </div>
-        <div style={{ marginLeft: 'auto' }}>
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+          <button
+            onClick={agregarMes}
+            style={{ padding: '0.3rem 0.7rem', backgroundColor: '#1a2a3a', color: '#81d4fa', border: '1px solid #4fc3f7', borderRadius: '3px', cursor: 'pointer', fontSize: '0.75rem', fontWeight: '600' }}
+          >
+            + Mes nuevo
+          </button>
           {importing ? (
             <span style={{ fontSize: '0.78rem', color: '#888' }}>{importProgress}</span>
           ) : (
