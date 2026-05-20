@@ -373,10 +373,10 @@ function ForrajePanel({ hacienda, historial }) {
   const [ndviHistory, setNdviHistory] = useState(null); // null = not yet loaded
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [efficiency, setEfficiency] = useState(50);
-  const [msData, setMsData] = useState(null); // parsed GEE CSV: {'YYYY-MM': {oferta_kg, ...}}
-  const [selectedYear, setSelectedYear] = useState(null); // for Por Potrero heatmap
-  const [validacion, setValidacion] = useState(null);     // {ym, ndvi: {nombre: val}}
-  const [loadingVal, setLoadingVal] = useState(false);
+  const [msData, setMsData] = useState(null);
+  const [selectedYear, setSelectedYear] = useState(null);
+  const [validacion, setValidacion] = useState({ results: {}, running: false, progress: 0, total: 0 });
+  const [valSelMonths, setValSelMonths] = useState(null); // null = not yet initialized
 
   // Fetch radiation on mount
   useEffect(() => {
@@ -738,110 +738,184 @@ function ForrajePanel({ hacienda, historial }) {
                   Fuente: Google Earth Engine · Monteith (1972) · ERA5 + Sentinel-2 L2A
                 </div>
 
-                {/* ── VALIDACIÓN ── */}
+                {/* ── VALIDACIÓN MULTI-MES ── */}
                 {(() => {
-                  // Months present in both GEE CSV and Open-Meteo radiation
-                  const sharedMonths = curvaMonths.filter(ym => radiation[ym] != null).slice(-12);
-                  const valYM = validacion?.selectedYM ?? sharedMonths[sharedMonths.length - 1] ?? null;
-                  const radVal = valYM ? radiation[valYM] : null;
+                  const sharedMonths = curvaMonths.filter(ym => radiation[ym] != null);
+                  // Default selection: one month per season from most recent year available
+                  const defaultSel = (() => {
+                    if (!sharedMonths.length) return [];
+                    const lastYear = sharedMonths[sharedMonths.length - 1].slice(0, 4);
+                    const targets = [`${lastYear}-01`, `${lastYear}-04`, `${lastYear}-07`, `${lastYear}-10`,
+                                     `${String(+lastYear-1)}-01`, `${String(+lastYear-1)}-04`,
+                                     `${String(+lastYear-1)}-07`, `${String(+lastYear-1)}-10`];
+                    return targets.filter(ym => sharedMonths.includes(ym)).slice(0, 4);
+                  })();
+                  const selMonths = valSelMonths ?? defaultSel;
 
-                  function runValidacion() {
-                    if (!valYM || loadingVal) return;
-                    setLoadingVal(true);
-                    const dateStr = valYM + '-21';
-                    fetch('/api/forraje-ndvi', {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ points: potreroPoints(), index: 'NDVIc', dates: [dateStr] })
-                    })
-                      .then(r => r.json())
-                      .then(data => setValidacion({ selectedYM: valYM, fetchedYM: valYM, ndvi: data[valYM] || {} }))
-                      .catch(() => setValidacion(v => ({ ...v, fetchedYM: valYM, ndvi: {} })))
-                      .finally(() => setLoadingVal(false));
+                  async function runMultiVal() {
+                    if (!selMonths.length || validacion.running) return;
+                    setValidacion({ results: {}, running: true, progress: 0, total: selMonths.length });
+                    const points = potreroPoints();
+                    for (let i = 0; i < selMonths.length; i++) {
+                      const ym = selMonths[i];
+                      try {
+                        const res = await fetch('/api/forraje-ndvi', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ points, index: 'NDVIc', dates: [ym + '-21'] })
+                        });
+                        const data = await res.json();
+                        const ndviByPotrero = data[ym] || {};
+                        const rad = radiation[ym];
+                        const rows = potreroNames.map(nombre => {
+                          const gee = byPotrero[nombre]?.[ym] ?? null;
+                          const ndvi = ndviByPotrero[nombre] ?? null;
+                          const app = ndvi != null && rad != null ? Math.round(calcMS(ndvi, rad)) : null;
+                          const diff = gee != null && app != null ? Math.round((app - gee) / gee * 100) : null;
+                          return { nombre, ndvi, app, gee, diff };
+                        });
+                        setValidacion(v => ({ ...v, results: { ...v.results, [ym]: rows }, progress: i + 1 }));
+                      } catch (_) {
+                        setValidacion(v => ({ ...v, progress: i + 1 }));
+                      }
+                    }
+                    setValidacion(v => ({ ...v, running: false }));
                   }
 
-                  const rows = validacion?.fetchedYM === valYM
-                    ? potreroNames.map(nombre => {
-                        const gee = byPotrero[nombre]?.[valYM] ?? null;
-                        const ndvi = validacion.ndvi[nombre] ?? null;
-                        const app = ndvi != null && radVal != null ? Math.round(calcMS(ndvi, radVal)) : null;
-                        const diff = gee != null && app != null ? Math.round((app - gee) / gee * 100) : null;
-                        return { nombre, gee, app, ndvi, diff };
-                      })
-                    : null;
+                  const MESES = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+                  const season = ym => { const m = parseInt(ym.slice(5),10); return m<=2||m===12?'Verano':m<=5?'Otoño':m<=8?'Invierno':'Primavera'; };
+
+                  const doneMonths = Object.keys(validacion.results).sort();
 
                   return (
                     <div style={{ marginTop: '1.5rem', borderTop: '1px solid #222', paddingTop: '1rem' }}>
-                      <div style={{ fontSize: '0.8rem', color: '#666', fontWeight: '600', marginBottom: '0.6rem' }}>
-                        Validación: App (Copernicus + Open-Meteo) vs GEE (ERA5 + Sentinel-2)
+                      <div style={{ fontSize: '0.8rem', color: '#666', fontWeight: '600', marginBottom: '0.75rem' }}>
+                        Validación multi-mes: App (Copernicus + Open-Meteo) vs GEE (ERA5 + Sentinel-2)
                       </div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.75rem', flexWrap: 'wrap' }}>
-                        <span style={{ fontSize: '0.75rem', color: '#555' }}>Mes a comparar:</span>
-                        <select
-                          value={valYM ?? ''}
-                          onChange={e => setValidacion(v => ({ ...(v || {}), selectedYM: e.target.value, fetchedYM: null }))}
-                          style={{ backgroundColor: '#1a1a1a', color: '#ccc', border: '1px solid #333', borderRadius: '4px', padding: '0.25rem 0.5rem', fontSize: '0.78rem' }}
-                        >
-                          {sharedMonths.map(ym => (
-                            <option key={ym} value={ym}>{ym} (GEE + radiación disponibles)</option>
-                          ))}
-                        </select>
-                        <button onClick={runValidacion} disabled={loadingVal || !valYM} style={{
-                          padding: '0.3rem 0.8rem', fontSize: '0.78rem', fontWeight: '600',
-                          backgroundColor: loadingVal ? '#1a1a1a' : '#0f2a1a',
-                          color: loadingVal ? '#444' : '#4caf50',
-                          border: '1px solid #2a4a2a', borderRadius: '4px', cursor: loadingVal ? 'default' : 'pointer'
+
+                      {/* Month checkboxes */}
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem', marginBottom: '0.75rem' }}>
+                        {sharedMonths.map(ym => {
+                          const checked = selMonths.includes(ym);
+                          const done = validacion.results[ym];
+                          return (
+                            <label key={ym} style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', cursor: 'pointer',
+                              padding: '0.2rem 0.5rem', borderRadius: '4px', fontSize: '0.75rem',
+                              border: `1px solid ${checked ? '#4caf50' : '#2a2a2a'}`,
+                              backgroundColor: done ? '#0a1a0a' : checked ? '#0f1f0f' : 'transparent',
+                              color: checked ? '#4caf50' : '#555' }}>
+                              <input type="checkbox" checked={checked}
+                                onChange={() => setValSelMonths(prev => {
+                                  const cur = prev ?? defaultSel;
+                                  return cur.includes(ym) ? cur.filter(m => m !== ym) : [...cur, ym];
+                                })}
+                                style={{ accentColor: '#4caf50', width: '12px', height: '12px' }} />
+                              {MESES[parseInt(ym.slice(5),10)-1]} {ym.slice(2,4)}
+                              {done && <span style={{ color: '#4caf50' }}>✓</span>}
+                            </label>
+                          );
+                        })}
+                      </div>
+
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1rem' }}>
+                        <button onClick={runMultiVal} disabled={validacion.running || !selMonths.length} style={{
+                          padding: '0.35rem 1rem', fontSize: '0.8rem', fontWeight: '600',
+                          backgroundColor: validacion.running ? '#1a1a1a' : '#0f2a1a',
+                          color: validacion.running ? '#444' : '#4caf50',
+                          border: '1px solid #2a4a2a', borderRadius: '4px', cursor: validacion.running ? 'default' : 'pointer'
                         }}>
-                          {loadingVal ? '⏳ Consultando Copernicus...' : '▶ Validar'}
+                          {validacion.running
+                            ? `⏳ ${validacion.progress}/${validacion.total} meses...`
+                            : `▶ Validar ${selMonths.length} mes${selMonths.length !== 1 ? 'es' : ''}`}
                         </button>
-                        {sharedMonths.length === 0 && (
-                          <span style={{ fontSize: '0.72rem', color: '#666' }}>No hay meses con datos en ambas fuentes</span>
+                        {doneMonths.length > 0 && !validacion.running && (
+                          <button onClick={() => setValidacion({ results: {}, running: false, progress: 0, total: 0 })}
+                            style={{ fontSize: '0.72rem', color: '#555', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}>
+                            Limpiar
+                          </button>
                         )}
                       </div>
 
-                      {rows && (
-                        <>
-                          <div style={{ fontSize: '0.72rem', color: '#555', marginBottom: '0.5rem' }}>
-                            NDVI Copernicus del 21/{valYM} · Radiación Open-Meteo {valYM} · MS GEE pixel-a-pixel {valYM}
-                          </div>
-                          <table style={{ borderCollapse: 'collapse', fontSize: '0.78rem', width: '100%', maxWidth: '580px' }}>
-                            <thead>
-                              <tr style={{ backgroundColor: '#1a1a1a' }}>
-                                {['Potrero', 'NDVIc', 'App (kg/ha)', 'GEE (kg/ha)', 'Diferencia'].map(h => (
-                                  <th key={h} style={{ padding: '0.4rem 0.75rem', textAlign: h === 'Potrero' ? 'left' : 'right', color: '#666', fontWeight: '600', fontSize: '0.7rem', textTransform: 'uppercase', borderBottom: '1px solid #2a2a2a' }}>{h}</th>
-                                ))}
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {rows.map((r, i) => {
-                                const diffColor = r.diff == null ? '#444' : Math.abs(r.diff) < 10 ? '#4caf50' : Math.abs(r.diff) < 25 ? '#ff9800' : '#f44336';
-                                return (
-                                  <tr key={r.nombre} style={{ backgroundColor: i % 2 === 0 ? '#111' : '#131313' }}>
-                                    <td style={{ padding: '0.35rem 0.75rem', color: '#ffeb3b', fontWeight: '700' }}>{r.nombre}</td>
-                                    <td style={{ padding: '0.35rem 0.75rem', textAlign: 'right', color: '#4caf50' }}>{r.ndvi != null ? r.ndvi.toFixed(3) : '—'}</td>
-                                    <td style={{ padding: '0.35rem 0.75rem', textAlign: 'right', color: '#fff' }}>{r.app != null ? r.app.toLocaleString() : '—'}</td>
-                                    <td style={{ padding: '0.35rem 0.75rem', textAlign: 'right', color: '#aaa' }}>{r.gee != null ? r.gee.toLocaleString() : '—'}</td>
-                                    <td style={{ padding: '0.35rem 0.75rem', textAlign: 'right', color: diffColor, fontWeight: '700' }}>
-                                      {r.diff != null ? `${r.diff > 0 ? '+' : ''}${r.diff}%` : '—'}
-                                    </td>
+                      {/* Per-month results */}
+                      {doneMonths.map(ym => {
+                        const rows = validacion.results[ym];
+                        const diffs = rows.map(r => r.diff).filter(d => d != null);
+                        const avgDiff = diffs.length ? Math.round(diffs.reduce((s,d) => s+d, 0) / diffs.length) : null;
+                        const avgAbs = diffs.length ? Math.round(diffs.map(Math.abs).reduce((s,d) => s+d, 0) / diffs.length) : null;
+                        const diffColor = avgAbs == null ? '#444' : avgAbs < 10 ? '#4caf50' : avgAbs < 25 ? '#ff9800' : '#f44336';
+                        return (
+                          <div key={ym} style={{ marginBottom: '1.25rem' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '0.4rem' }}>
+                              <span style={{ fontSize: '0.78rem', color: '#aaa', fontWeight: '700' }}>
+                                {ym} · {season(ym)}
+                              </span>
+                              {avgDiff != null && (
+                                <span style={{ fontSize: '0.75rem', color: diffColor, fontWeight: '700' }}>
+                                  bias {avgDiff > 0 ? '+' : ''}{avgDiff}% · error abs. medio {avgAbs}%
+                                </span>
+                              )}
+                            </div>
+                            <div style={{ overflowX: 'auto' }}>
+                              <table style={{ borderCollapse: 'collapse', fontSize: '0.75rem', whiteSpace: 'nowrap' }}>
+                                <thead>
+                                  <tr style={{ backgroundColor: '#1a1a1a' }}>
+                                    {['Potrero','NDVIc','App kg/ha','GEE kg/ha','Dif%'].map(h => (
+                                      <th key={h} style={{ padding: '0.3rem 0.6rem', textAlign: h==='Potrero'?'left':'right', color: '#555', fontWeight: '600', fontSize: '0.68rem', textTransform: 'uppercase', borderBottom: '1px solid #222' }}>{h}</th>
+                                    ))}
                                   </tr>
-                                );
-                              })}
-                            </tbody>
-                          </table>
+                                </thead>
+                                <tbody>
+                                  {rows.map((r, i) => {
+                                    const dc = r.diff==null?'#444':Math.abs(r.diff)<10?'#4caf50':Math.abs(r.diff)<25?'#ff9800':'#f44336';
+                                    return (
+                                      <tr key={r.nombre} style={{ backgroundColor: i%2===0?'#111':'#131313' }}>
+                                        <td style={{ padding: '0.3rem 0.6rem', color: '#ffeb3b', fontWeight: '700' }}>{r.nombre}</td>
+                                        <td style={{ padding: '0.3rem 0.6rem', textAlign: 'right', color: '#4caf50' }}>{r.ndvi!=null?r.ndvi.toFixed(3):'—'}</td>
+                                        <td style={{ padding: '0.3rem 0.6rem', textAlign: 'right', color: '#fff' }}>{r.app!=null?r.app.toLocaleString():'—'}</td>
+                                        <td style={{ padding: '0.3rem 0.6rem', textAlign: 'right', color: '#888' }}>{r.gee!=null?r.gee.toLocaleString():'—'}</td>
+                                        <td style={{ padding: '0.3rem 0.6rem', textAlign: 'right', color: dc, fontWeight: '700' }}>{r.diff!=null?`${r.diff>0?'+':''}${r.diff}%`:'—'}</td>
+                                      </tr>
+                                    );
+                                  })}
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
+                        );
+                      })}
+
+                      {/* Overall summary */}
+                      {doneMonths.length >= 2 && (
+                        <div style={{ marginTop: '0.5rem', padding: '0.75rem', backgroundColor: '#111', border: '1px solid #2a2a2a', borderRadius: '4px', fontSize: '0.78rem' }}>
+                          <span style={{ color: '#666', fontWeight: '700' }}>Resumen general · {doneMonths.length} meses</span>
                           {(() => {
-                            const diffs = rows.map(r => r.diff).filter(d => d != null);
-                            const avgDiff = diffs.length ? Math.round(diffs.reduce((s, d) => s + d, 0) / diffs.length) : null;
-                            const avgAbsDiff = diffs.length ? Math.round(diffs.map(Math.abs).reduce((s, d) => s + d, 0) / diffs.length) : null;
-                            return avgDiff != null ? (
-                              <div style={{ marginTop: '0.6rem', fontSize: '0.75rem', color: '#666' }}>
-                                Diferencia media: <span style={{ color: Math.abs(avgDiff) < 10 ? '#4caf50' : '#ff9800', fontWeight: '700' }}>{avgDiff > 0 ? '+' : ''}{avgDiff}%</span>
-                                &nbsp;· Error absoluto medio: <span style={{ color: '#aaa', fontWeight: '700' }}>{avgAbsDiff}%</span>
-                                &nbsp;· <span style={{ color: '#444' }}>Verde &lt;10% · Naranja &lt;25% · Rojo ≥25%</span>
+                            const allDiffs = doneMonths.flatMap(ym => (validacion.results[ym] || []).map(r => r.diff).filter(d => d != null));
+                            const avg = allDiffs.length ? Math.round(allDiffs.reduce((s,d)=>s+d,0)/allDiffs.length) : null;
+                            const abs = allDiffs.length ? Math.round(allDiffs.map(Math.abs).reduce((s,d)=>s+d,0)/allDiffs.length) : null;
+                            const bySeason = {};
+                            doneMonths.forEach(ym => {
+                              const s = season(ym);
+                              const diffs = (validacion.results[ym]||[]).map(r=>r.diff).filter(d=>d!=null);
+                              if (!bySeason[s]) bySeason[s] = [];
+                              bySeason[s].push(...diffs);
+                            });
+                            return avg != null ? (
+                              <div style={{ marginTop: '0.4rem' }}>
+                                <span style={{ color: Math.abs(avg)<10?'#4caf50':'#ff9800', fontWeight:'700' }}>
+                                  Bias medio: {avg>0?'+':''}{avg}%
+                                </span>
+                                <span style={{ color: '#555' }}> · Error abs. medio: </span>
+                                <span style={{ color: '#aaa', fontWeight: '700' }}>{abs}%</span>
+                                <div style={{ marginTop: '0.4rem', display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
+                                  {Object.entries(bySeason).map(([s, ds]) => {
+                                    const a = Math.round(ds.reduce((x,d)=>x+d,0)/ds.length);
+                                    return <span key={s} style={{ color: '#666' }}>{s}: <span style={{ color: Math.abs(a)<10?'#4caf50':'#ff9800', fontWeight:'700' }}>{a>0?'+':''}{a}%</span></span>;
+                                  })}
+                                </div>
                               </div>
                             ) : null;
                           })()}
-                        </>
+                        </div>
                       )}
                     </div>
                   );
