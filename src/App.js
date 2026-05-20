@@ -425,7 +425,10 @@ function ForrajePanel({ hacienda, historial }) {
 
   const currentYM = new Date().toISOString().slice(0, 7);
   const currentMonth = new Date().getMonth();
-  const currentRad = radiation[currentYM] ?? null;
+  const radMonths = Object.keys(radiation).sort();
+  // Use current month if available, otherwise fall back to most recent complete month
+  const currentRad = radiation[currentYM] ?? (radMonths.length > 0 ? radiation[radMonths[radMonths.length - 1]] : null);
+  const radLabel = radiation[currentYM] ? currentYM : radMonths[radMonths.length - 1];
 
   // Estado Actual: use own fetched ndviCurrent + current month radiation
   const estadoActual = POSTREROS_GEOJSON.features.map(f => {
@@ -570,9 +573,19 @@ function ForrajePanel({ hacienda, historial }) {
         {/* ── ESTADO ACTUAL ── */}
         {activeTab === 'actual' && (
           <div>
-            {(loadingCurrent || currentRad == null) && (
+            {loadingCurrent && (
               <div style={{ padding: '0.75rem', backgroundColor: '#0f1a0f', border: '1px solid #2a3a2a', borderRadius: '4px', fontSize: '0.8rem', color: '#888', marginBottom: '1rem' }}>
-                {loadingCurrent ? '⏳ Calculando NDVI por potrero...' : '⏳ Cargando radiación solar...'}
+                ⏳ Calculando NDVI por potrero...
+              </div>
+            )}
+            {!loadingCurrent && currentRad == null && (
+              <div style={{ padding: '0.75rem', backgroundColor: '#1a1000', border: '1px solid #3a3000', borderRadius: '4px', fontSize: '0.8rem', color: '#888', marginBottom: '1rem' }}>
+                ⏳ Cargando radiación solar...
+              </div>
+            )}
+            {!loadingCurrent && currentRad != null && radLabel !== currentYM && (
+              <div style={{ padding: '0.5rem 0.75rem', backgroundColor: '#111', border: '1px solid #2a2a2a', borderRadius: '4px', fontSize: '0.75rem', color: '#666', marginBottom: '1rem' }}>
+                Radiación solar: usando {radLabel} (mes actual aún no disponible en Open-Meteo)
               </div>
             )}
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem' }}>
