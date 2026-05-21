@@ -15,25 +15,30 @@ export default async function handler(req, res) {
   const from = `${y}-${String(m).padStart(2, '0')}-01T00:00:00Z`;
   const to   = `${y}-${String(m).padStart(2, '0')}-${lastDay}T23:59:59Z`;
 
-  const url = `https://catalogue.dataspace.copernicus.eu/stac/collections/SENTINEL-2/items`
-    + `?bbox=${FARM_BBOX}&datetime=${from}/${to}&limit=200&sortby=-datetime`;
+  // Use the L2A-specific collection; avoid unsupported sortby parameter
+  const url = `https://catalogue.dataspace.copernicus.eu/stac/collections/SENTINEL-2-L2A/items`
+    + `?bbox=${FARM_BBOX}&datetime=${from}/${to}&limit=200`;
 
   try {
     const r = await fetch(url, { headers: { Accept: 'application/json' } });
+    if (!r.ok) {
+      const text = await r.text();
+      console.error('STAC error', r.status, text.slice(0, 200));
+      return res.status(502).json({ error: `STAC ${r.status}`, detail: text.slice(0, 200) });
+    }
     const data = await r.json();
 
     const dates = {};
     for (const item of data.features || []) {
-      // Only L2A (surface reflectance)
-      const pt = item.properties['s2:product_type'] || '';
-      if (pt && !pt.includes('2A')) continue;
-
-      const dt = (item.properties.datetime || '').slice(0, 10);
+      const dt = (item.properties?.datetime || '').slice(0, 10);
       if (!dt) continue;
 
+      // Cloud cover — try all known CDSE property names
       const cloud = Math.round(
         item.properties['eo:cloud_cover'] ??
-        item.properties.cloudCoverPercentage ?? 100
+        item.properties['cloudCoverPercentage'] ??
+        item.properties['s2:cloud_cover'] ??
+        100
       );
 
       if (!(dt in dates) || cloud < dates[dt]) {
