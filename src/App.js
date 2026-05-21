@@ -1551,7 +1551,7 @@ function App() {
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    if (!showNDVI || !ndviDate || ndviIndex === 'NATURAL') { setNdviStats({}); return; }
+    if (!showNDVI || !ndviDate || ndviIndex === 'NATURAL' || ndviIndex === 'SWIR') { setNdviStats({}); return; }
     fetch('/api/ndvi-stats', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1780,9 +1780,10 @@ function App() {
                       ))}
                     </div>
                     <div style={{ display: 'flex', gap: '0.25rem', marginBottom: '0.7rem' }}>
-                      <button onClick={() => setNdviIndex('NATURAL')} style={{ flex:1, padding:'0.22rem 0.4rem', fontSize:'0.7rem', fontWeight:'700', border:'1px solid', borderRadius:'3px', cursor:'pointer', backgroundColor: ndviIndex==='NATURAL'?'#4caf50':'#222', color: ndviIndex==='NATURAL'?'#000':'#999', borderColor: ndviIndex==='NATURAL'?'#4caf50':'#3a3a3a' }}>🛰 Imagen natural (color real)</button>
+                      <button onClick={() => setNdviIndex('NATURAL')} style={{ flex:1, padding:'0.22rem 0.4rem', fontSize:'0.7rem', fontWeight:'700', border:'1px solid', borderRadius:'3px', cursor:'pointer', backgroundColor: ndviIndex==='NATURAL'?'#4caf50':'#222', color: ndviIndex==='NATURAL'?'#000':'#999', borderColor: ndviIndex==='NATURAL'?'#4caf50':'#3a3a3a' }}>🛰 Color real</button>
+                      <button onClick={() => setNdviIndex('SWIR')} style={{ flex:1, padding:'0.22rem 0.4rem', fontSize:'0.7rem', fontWeight:'700', border:'1px solid', borderRadius:'3px', cursor:'pointer', backgroundColor: ndviIndex==='SWIR'?'#4caf50':'#222', color: ndviIndex==='SWIR'?'#000':'#999', borderColor: ndviIndex==='SWIR'?'#4caf50':'#3a3a3a' }}>💧 SWIR·NIR·R</button>
                     </div>
-                    {hoverValue && ndviIndex !== 'NATURAL' && (
+                    {hoverValue && ndviIndex !== 'NATURAL' && ndviIndex !== 'SWIR' && (
                       <div style={{ marginBottom: '0.6rem', padding: '0.4rem 0.6rem', backgroundColor: '#1a1a1a', borderRadius: '4px', border: '1px solid #333' }}>
                         <span style={{ color: '#4caf50', fontWeight: '700', fontSize: '0.85rem' }}>{ndviIndex}: {typeof hoverValue.value === 'number' ? hoverValue.value.toFixed(3) : '—'}</span>
                         <span style={{ color: '#888', fontSize: '0.72rem', marginLeft: '0.5rem' }}>{hoverValue.label || ''}</span>
@@ -1831,7 +1832,7 @@ function App() {
                         <span style={{ display: 'block', fontSize: '1.3rem', fontWeight: 'bold', color: '#ffeb3b' }}>{hacienda.filter(h => h.potrero === selectedPotrero.nombre).reduce((s,h)=>s+(h.cantidad||0),0).toLocaleString()}</span>
                       </div>
                     </div>
-                    {showNDVI && ndviIndex !== 'NATURAL' && (
+                    {showNDVI && ndviIndex !== 'NATURAL' && ndviIndex !== 'SWIR' && (
                       <div style={{ marginBottom: '0.6rem', padding: '0.4rem 0.6rem', backgroundColor: '#1a1a1a', borderRadius: '4px', border: '1px solid #333' }}>
                         <span style={{ fontSize: '0.7rem', color: '#aaa', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{ndviIndex} promedio</span>
                         <span style={{ display: 'block', fontSize: '1.2rem', fontWeight: 'bold', color: '#4caf50', marginTop: '0.1rem' }}>

@@ -109,6 +109,17 @@ function evaluatePixel(s){
     Math.min(255,Math.round(s.B02*3.5*255)),
     255
   ];
+}`,
+  SWIR: `//VERSION=3
+function setup(){return{input:[{bands:["B04","B08","B11","dataMask"]}],output:{bands:4,sampleType:"UINT8"}}}
+function evaluatePixel(s){
+  if(!s.dataMask)return[0,0,0,0];
+  return[
+    Math.min(255,Math.round(s.B11*4.0*255)),
+    Math.min(255,Math.round(s.B08*3.0*255)),
+    Math.min(255,Math.round(s.B04*3.5*255)),
+    255
+  ];
 }`
 };
 
