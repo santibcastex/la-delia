@@ -6,7 +6,7 @@ const VALUE_EVALSCRIPTS = {
   EVI:   `//VERSION=3\nfunction setup(){return{input:[{bands:["B02","B04","B08","dataMask"]}],output:{bands:4,sampleType:"UINT8"}}}\nfunction evaluatePixel(s){if(!s.dataMask)return[0,0,0,0];const v=2.5*(s.B08-s.B04)/(s.B08+6*s.B04-7.5*s.B02+1+1e-10);return[Math.round((v+1)/2*254),0,0,255];}`,
   NDRE:  `//VERSION=3\nfunction setup(){return{input:[{bands:["B05","B08","dataMask"]}],output:{bands:4,sampleType:"UINT8"}}}\nfunction evaluatePixel(s){if(!s.dataMask)return[0,0,0,0];const v=(s.B08-s.B05)/(s.B08+s.B05+1e-10);return[Math.round((v+1)/2*254),0,0,255];}`,
   MSAVI: `//VERSION=3\nfunction setup(){return{input:[{bands:["B04","B08","dataMask"]}],output:{bands:4,sampleType:"UINT8"}}}\nfunction evaluatePixel(s){if(!s.dataMask)return[0,0,0,0];const n=s.B08,r=s.B04;const v=(2*n+1-Math.sqrt(Math.pow(2*n+1,2)-8*(n-r)))/2;return[Math.round((v+1)/2*254),0,0,255];}`,
-  RECI:  `//VERSION=3\nfunction setup(){return{input:[{bands:["B05","B07","dataMask"]}],output:{bands:4,sampleType:"UINT8"}}}\nfunction evaluatePixel(s){if(!s.dataMask)return[0,0,0,0];const v=Math.min(10,Math.max(0,s.B07/(s.B05+1e-10)-1));return[Math.round(v/10*254),0,0,255];}`,
+  MNDWI: `//VERSION=3\nfunction setup(){return{input:[{bands:["B03","B11","dataMask"]}],output:{bands:4,sampleType:"UINT8"}}}\nfunction evaluatePixel(s){if(!s.dataMask)return[0,0,0,0];const v=(s.B03-s.B11)/(s.B03+s.B11+1e-10);return[Math.round((v+1)/2*254),0,0,255];}`,
   NDMI:  `//VERSION=3\nfunction setup(){return{input:[{bands:["B08","B11","dataMask"]}],output:{bands:4,sampleType:"UINT8"}}}\nfunction evaluatePixel(s){if(!s.dataMask)return[0,0,0,0];const v=(s.B08-s.B11)/(s.B08+s.B11+1e-10);return[Math.round((v+1)/2*254),0,0,255];}`,
   NDWI:  `//VERSION=3\nfunction setup(){return{input:[{bands:["B03","B08","dataMask"]}],output:{bands:4,sampleType:"UINT8"}}}\nfunction evaluatePixel(s){if(!s.dataMask)return[0,0,0,0];const v=(s.B03-s.B08)/(s.B03+s.B08+1e-10);return[Math.round((v+1)/2*254),0,0,255];}`,
 };
@@ -36,7 +36,7 @@ function decodeMeanValue(buf, index) {
       const off = row * rowStride + 1 + col * 4;
       const r = raw[off], a = raw[off + 3];
       if (a > 0) {
-        sum += index === 'RECI' ? r / 254 * 10 : r / 254 * 2 - 1;
+        sum += r / 254 * 2 - 1;
         count++;
       }
     }
