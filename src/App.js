@@ -1350,6 +1350,150 @@ function PlanillaPanel({ db }) {
   );
 }
 
+// ─── NDVI Date Picker ─────────────────────────────────────────────────────────
+
+const MESES = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+const DIAS_SEMANA = ['Dom','Lun','Mar','Mié','Jue','Vie','Sáb'];
+
+function cloudDot(pct) {
+  if (pct <= 10) return '#4caf50';
+  if (pct <= 30) return '#ffeb3b';
+  if (pct <= 60) return '#ff9800';
+  return '#666';
+}
+
+function NdviDatePicker({ value, onChange }) {
+  const today = new Date().toISOString().slice(0, 10);
+  const initDate = value ? new Date(value + 'T12:00:00Z') : new Date();
+  const [open, setOpen] = useState(false);
+  const [viewYear, setViewYear] = useState(initDate.getUTCFullYear());
+  const [viewMonth, setViewMonth] = useState(initDate.getUTCMonth()); // 0-indexed
+  const [avail, setAvail] = useState({});   // { 'YYYY-MM-DD': cloudPct }
+  const [fetching, setFetching] = useState(false);
+  const popupRef = useRef(null);
+
+  // Close on outside click
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e) => { if (popupRef.current && !popupRef.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+
+  // Fetch available dates when month/year changes and picker is open
+  useEffect(() => {
+    if (!open) return;
+    setFetching(true);
+    fetch(`/api/ndvi-dates?year=${viewYear}&month=${viewMonth + 1}`)
+      .then(r => r.json())
+      .then(data => { setAvail(prev => ({ ...prev, ...data })); setFetching(false); })
+      .catch(() => setFetching(false));
+  }, [open, viewYear, viewMonth]);
+
+  const prevMonth = () => {
+    if (viewMonth === 0) { setViewMonth(11); setViewYear(y => y - 1); }
+    else setViewMonth(m => m - 1);
+  };
+  const nextMonth = () => {
+    const nextStr = `${viewYear}-${String(viewMonth + 2).padStart(2, '0')}-01`;
+    if (nextStr > today) return; // no future months
+    if (viewMonth === 11) { setViewMonth(0); setViewYear(y => y + 1); }
+    else setViewMonth(m => m + 1);
+  };
+
+  const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
+  const firstDow = new Date(viewYear, viewMonth, 1).getDay();
+
+  const fmtLabel = (d) => {
+    if (!d) return 'Fecha';
+    const [y, m, day] = d.split('-');
+    return `${day}/${m}/${y.slice(2)}`;
+  };
+
+  const isNextDisabled = `${viewYear}-${String(viewMonth + 2).padStart(2, '0')}-01` > today;
+
+  return (
+    <div ref={popupRef} style={{ position: 'relative', display: 'inline-block' }}>
+      <button
+        onClick={() => setOpen(v => !v)}
+        style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', padding: '0.28rem 0.65rem', backgroundColor: open ? '#1e3a1e' : '#1a1a1a', color: '#fff', border: `1px solid ${open ? '#4caf50' : '#333'}`, borderRadius: '4px', cursor: 'pointer', fontSize: '0.82rem', fontWeight: '600' }}
+      >
+        📅 {fmtLabel(value)}
+      </button>
+
+      {open && (
+        <div style={{ position: 'absolute', bottom: 'calc(100% + 6px)', left: 0, zIndex: 2000, backgroundColor: '#111', border: '1px solid #2a2a2a', borderRadius: '8px', padding: '0.75rem', width: '252px', boxShadow: '0 8px 32px rgba(0,0,0,0.7)' }}>
+          {/* Header */}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
+            <button onClick={prevMonth} style={{ background: 'none', border: 'none', color: '#aaa', fontSize: '1.2rem', cursor: 'pointer', padding: '2px 8px', lineHeight: 1 }}>‹</button>
+            <span style={{ color: '#fff', fontWeight: '700', fontSize: '0.82rem' }}>
+              {MESES[viewMonth]} {viewYear}
+              {fetching && <span style={{ color: '#555', fontSize: '0.65rem', marginLeft: '0.4rem' }}>...</span>}
+            </span>
+            <button onClick={nextMonth} disabled={isNextDisabled} style={{ background: 'none', border: 'none', color: isNextDisabled ? '#2a2a2a' : '#aaa', fontSize: '1.2rem', cursor: isNextDisabled ? 'default' : 'pointer', padding: '2px 8px', lineHeight: 1 }}>›</button>
+          </div>
+
+          {/* Day-of-week labels */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7,1fr)', marginBottom: '3px' }}>
+            {DIAS_SEMANA.map(d => (
+              <div key={d} style={{ textAlign: 'center', fontSize: '0.58rem', color: '#444', fontWeight: '700', padding: '2px 0' }}>{d}</div>
+            ))}
+          </div>
+
+          {/* Day grid */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7,1fr)', gap: '2px' }}>
+            {Array.from({ length: firstDow }).map((_, i) => <div key={`e${i}`} />)}
+            {Array.from({ length: daysInMonth }).map((_, i) => {
+              const day = i + 1;
+              const dateStr = `${viewYear}-${String(viewMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+              const isFuture = dateStr > today;
+              const isSelected = dateStr === value;
+              const isToday = dateStr === today;
+              const cloud = avail[dateStr];
+              const hasImg = cloud !== undefined;
+
+              return (
+                <div
+                  key={day}
+                  onClick={() => { if (hasImg && !isFuture) { onChange(dateStr); setOpen(false); } }}
+                  title={hasImg ? `☁ ${cloud}% nubosidad` : isFuture ? 'Fecha futura' : 'Sin imagen disponible'}
+                  style={{
+                    textAlign: 'center', padding: '3px 1px', borderRadius: '4px',
+                    cursor: hasImg && !isFuture ? 'pointer' : 'default',
+                    backgroundColor: isSelected ? '#4caf50' : isToday ? '#1e3a1e' : 'transparent',
+                    border: isToday && !isSelected ? '1px solid #2d5016' : '1px solid transparent',
+                    color: isFuture ? '#222' : isSelected ? '#000' : hasImg ? '#fff' : '#333',
+                    fontWeight: isSelected ? '700' : '400',
+                    fontSize: '0.72rem',
+                  }}
+                >
+                  {day}
+                  {hasImg && !isSelected && (
+                    <div style={{ width: '4px', height: '4px', borderRadius: '50%', backgroundColor: cloudDot(cloud), margin: '1px auto 0' }} />
+                  )}
+                  {isSelected && (
+                    <div style={{ width: '4px', height: '4px', borderRadius: '50%', backgroundColor: '#000', margin: '1px auto 0' }} />
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Legend */}
+          <div style={{ display: 'flex', gap: '0.6rem', marginTop: '0.55rem', paddingTop: '0.45rem', borderTop: '1px solid #1e1e1e', flexWrap: 'wrap' }}>
+            {[['#4caf50', '≤10%'], ['#ffeb3b', '≤30%'], ['#ff9800', '≤60%'], ['#666', '>60%']].map(([c, l]) => (
+              <div key={l} style={{ display: 'flex', alignItems: 'center', gap: '3px', fontSize: '0.58rem', color: '#555' }}>
+                <div style={{ width: '5px', height: '5px', borderRadius: '50%', backgroundColor: c, flexShrink: 0 }} />
+                {l} ☁
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Map View ─────────────────────────────────────────────────────────────────
 
 function MapView({ onPotreroClick, modoMover, ndviActive, ndviDate, ndviIndex, showBasemap, onHoverValue, ndviStats }) {
@@ -1536,7 +1680,7 @@ function App() {
   const [showBasemap, setShowBasemap] = useState(true);
   const [hoverValue, setHoverValue] = useState(null);
   const [ndviStats, setNdviStats] = useState({});
-  const NDVI_DATES = getNdviDates();
+
 
   useEffect(() => {
     getRedirectResult(auth).catch((err) => {
@@ -1762,12 +1906,8 @@ function App() {
                 {/* NDVI control panel */}
                 {showNDVI && (
                   <div style={{ position: 'absolute', bottom: '1.5rem', left: '1rem', zIndex: 1000, backgroundColor: 'rgba(15,15,15,0.92)', borderRadius: '8px', padding: '0.85rem 1rem', color: '#fff', fontSize: '0.82rem', minWidth: '230px', boxShadow: '0 4px 20px rgba(0,0,0,0.5)' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.7rem' }}>
-                      <button onClick={() => { const i = NDVI_DATES.indexOf(ndviDate); if (i < NDVI_DATES.length-1) setNdviDate(NDVI_DATES[i+1]); }}
-                        style={{ background: 'none', border: 'none', color: '#aaa', fontSize: '1.1rem', cursor: 'pointer', padding: '0 0.3rem' }}>‹</button>
-                      <span style={{ fontWeight: '600', fontSize: '0.83rem' }}>{ndviDate}</span>
-                      <button onClick={() => { const i = NDVI_DATES.indexOf(ndviDate); if (i > 0) setNdviDate(NDVI_DATES[i-1]); }}
-                        style={{ background: 'none', border: 'none', color: '#aaa', fontSize: '1.1rem', cursor: 'pointer', padding: '0 0.3rem' }}>›</button>
+                    <div style={{ marginBottom: '0.7rem' }}>
+                      <NdviDatePicker value={ndviDate} onChange={setNdviDate} />
                     </div>
                     <div style={{ display: 'flex', gap: '0.25rem', marginBottom: '0.25rem' }}>
                       {[{id:'NDVIc',label:'NDVI+'},{id:'NDVI',label:'NDVI'},{id:'EVI',label:'EVI'},{id:'NDRE',label:'NDRE'}].map(({id,label}) => (
