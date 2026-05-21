@@ -38,7 +38,7 @@ function decodeMeanValue(buf, index) {
       const off = row * rowStride + 1 + col * 4;
       const r = raw[off], a = raw[off + 3];
       if (a > 0) {
-        sum += index === 'RECI' ? r / 254 * 10 : r / 254 * 2 - 1;
+        sum += r / 254 * 2 - 1;
         count++;
       }
     }

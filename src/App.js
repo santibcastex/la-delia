@@ -1775,7 +1775,7 @@ function App() {
                       ))}
                     </div>
                     <div style={{ display: 'flex', gap: '0.25rem', marginBottom: '0.25rem' }}>
-                      {[{id:'MSAVI',label:'MSAVI'},{id:'RECI',label:'RECI'},{id:'NDMI',label:'NDMI'},{id:'NDWI',label:'NDWI'}].map(({id,label}) => (
+                      {[{id:'MSAVI',label:'MSAVI'},{id:'MNDWI',label:'MNDWI'},{id:'NDMI',label:'NDMI'},{id:'NDWI',label:'NDWI'}].map(({id,label}) => (
                         <button key={id} onClick={() => setNdviIndex(id)} style={{ flex:1, padding:'0.22rem 0', fontSize:'0.7rem', fontWeight:'700', border:'1px solid', borderRadius:'3px', cursor:'pointer', backgroundColor: ndviIndex===id?'#4caf50':'#222', color: ndviIndex===id?'#000':'#999', borderColor: ndviIndex===id?'#4caf50':'#3a3a3a' }}>{label}</button>
                       ))}
                     </div>

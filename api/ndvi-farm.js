@@ -81,11 +81,11 @@ const EVALSCRIPTS = {
     [0.05, 0.12, 0.20, 0.28, 0.36, 0.44, 0.52, 0.60],
     RAINBOW
   ),
-  RECI: mkScript(
-    ["B05","B07","dataMask"],
-    "s.B07/(s.B05+1e-10)-1",
-    [0.5, 1.0, 1.5, 2.2, 3.0, 4.0, 5.5, 7.5],
-    RAINBOW
+  MNDWI: mkScript(
+    ["B03","B11","dataMask"],
+    "(s.B03-s.B11)/(s.B03+s.B11+1e-10)",
+    [-0.30, -0.09, 0.00, 0.12, 0.25, 0.40],
+    MOISTURE
   ),
   NDMI: mkScript(
     ["B08","B11","dataMask"],
