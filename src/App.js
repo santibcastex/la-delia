@@ -2053,14 +2053,14 @@ function App() {
                               </div>
                               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                                 <div style={{ textAlign: 'right' }}>
-                                  {editingCantidad?.docId === entry.docId ? (
+                                  {editingCantidad != null && editingCantidad.docId === entry.docId ? (
                                     <input
                                       type="number"
                                       autoFocus
                                       value={editingCantidad.value}
-                                      onChange={e => setEditingCantidad(ec => ({ ...ec, value: e.target.value }))}
-                                      onBlur={() => guardarCantidad(entry.docId, editingCantidad.value)}
-                                      onKeyDown={e => { if (e.key === 'Enter') guardarCantidad(entry.docId, editingCantidad.value); if (e.key === 'Escape') setEditingCantidad(null); }}
+                                      onChange={e => setEditingCantidad(ec => ec ? { ...ec, value: e.target.value } : ec)}
+                                      onBlur={e => guardarCantidad(entry.docId, e.target.value)}
+                                      onKeyDown={e => { if (e.key === 'Enter') { e.target.blur(); } if (e.key === 'Escape') setEditingCantidad(null); }}
                                       style={{ width: '70px', background: '#333', border: '1px solid #4caf50', borderRadius: '3px', color: '#fff', fontSize: '1rem', fontWeight: 'bold', textAlign: 'right', padding: '0.1rem 0.3rem' }}
                                     />
                                   ) : (
