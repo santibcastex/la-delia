@@ -76,14 +76,19 @@ const POSTREROS_GEOJSON = {
   ]
 };
 
-const CATEGORIAS_ORDEN = ['Toritos', 'Toros', 'Vacas c/Cría', 'Vaquillonas 1-2 Años', 'Vaquillonas +2 Años'];
+const CATEGORIAS_ORDEN = ['Toritos', 'Toros', 'Vacas c/Cría', 'Vacas Cut', 'Vaquillonas 1-2 Años', 'Vaquillonas +2 Años', 'Novillitos', 'Caballos'];
+
+const PESO_PROMEDIO_DEFAULT = { 'Toritos': 150, 'Toros': 550, 'Vacas c/Cría': 480, 'Vacas Cut': 460, 'Vaquillonas 1-2 Años': 350, 'Vaquillonas +2 Años': 420, 'Novillitos': 280, 'Caballos': 500 };
 
 const HACIENDA_INICIAL = [
   { id: 1, nombre: 'Toritos',            rodeo: null, cantidad: 5,   peso_promedio: 150, potrero: null },
   { id: 2, nombre: 'Toros',              rodeo: null, cantidad: 26,  peso_promedio: 550, potrero: null },
   { id: 3, nombre: 'Vacas c/Cría',       rodeo: null, cantidad: 748, peso_promedio: 480, potrero: null },
-  { id: 4, nombre: 'Vaquillonas 1-2 Años', rodeo: null, cantidad: 196, peso_promedio: 350, potrero: null },
-  { id: 5, nombre: 'Vaquillonas +2 Años',  rodeo: null, cantidad: 219, peso_promedio: 420, potrero: null }
+  { id: 4, nombre: 'Vacas Cut',          rodeo: null, cantidad: 0,   peso_promedio: 460, potrero: null },
+  { id: 5, nombre: 'Vaquillonas 1-2 Años', rodeo: null, cantidad: 196, peso_promedio: 350, potrero: null },
+  { id: 6, nombre: 'Vaquillonas +2 Años',  rodeo: null, cantidad: 219, peso_promedio: 420, potrero: null },
+  { id: 7, nombre: 'Novillitos',         rodeo: null, cantidad: 0,   peso_promedio: 280, potrero: null },
+  { id: 8, nombre: 'Caballos',           rodeo: null, cantidad: 0,   peso_promedio: 500, potrero: null },
 ];
 
 const STYLE_NORMAL  = { color: '#fff', weight: 2, opacity: 0.9, fillColor: '#2d5016', fillOpacity: 0.4 };
@@ -1766,7 +1771,7 @@ function App() {
   };
 
   const agregarSubrodeo = async (catNombre, rodeoNombre, cantidad) => {
-    const pesoRef = hacienda.find(h => h.nombre === catNombre)?.peso_promedio || 450;
+    const pesoRef = hacienda.find(h => h.nombre === catNombre)?.peso_promedio || PESO_PROMEDIO_DEFAULT[catNombre] || 450;
     const newEntry = { nombre: catNombre, rodeo: rodeoNombre, cantidad: parseInt(cantidad) || 0, peso_promedio: pesoRef, potrero: null, fecha_ingreso: null, fecha_salida: null };
     try {
       const docRef = await addDoc(collection(db, 'hacienda'), newEntry);
@@ -2024,7 +2029,6 @@ function App() {
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
                     {CATEGORIAS_ORDEN.map(catNombre => {
                       const entries = hacienda.filter(h => h.nombre === catNombre);
-                      if (!entries.length) return null;
                       const total = entries.reduce((s, h) => s + (h.cantidad || 0), 0);
                       const multipleRodeos = entries.length > 1 || entries.some(e => e.rodeo);
                       return (
