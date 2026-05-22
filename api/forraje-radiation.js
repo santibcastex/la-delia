@@ -7,7 +7,8 @@ export default async function handler(req, res) {
   if (req.method === 'OPTIONS') return res.status(200).end();
 
   const now = new Date();
-  const endYear = now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear();
+  // NASA POWER puede no tener el año actual completo — usamos hasta el año anterior para garantizar datos
+  const endYear = now.getFullYear() - 1;
   const startYear = endYear - 5;
 
   // NASA POWER API — community AG, monthly, solar radiation MJ/m²/day
@@ -20,23 +21,28 @@ export default async function handler(req, res) {
 
   try {
     const r = await fetch(url, { headers: { Accept: 'application/json' } });
+    const text = await r.text();
+
+    if (req.query.debug === '1') {
+      return res.json({ status: r.status, url, body: text.slice(0, 1000) });
+    }
+
     if (!r.ok) {
-      const text = await r.text();
       return res.status(502).json({ error: `NASA POWER ${r.status}`, detail: text.slice(0, 200) });
     }
-    const data = await r.json();
 
-    // Response: data.properties.parameter.ALLSKY_SFC_SW_DWN = { "201901": 18.5, ... }
+    let data;
+    try { data = JSON.parse(text); } catch { return res.status(502).json({ error: 'invalid JSON', detail: text.slice(0, 200) }); }
+
     const raw = data?.properties?.parameter?.ALLSKY_SFC_SW_DWN || {};
 
     const monthly = {};
     for (const [key, val] of Object.entries(raw)) {
-      if (!val || val < 0) continue; // -999 = sin dato
+      if (val == null || val < 0) continue; // -999 = sin dato
       const year = key.slice(0, 4);
       const month = key.slice(4, 6);
-      if (month === '13') continue; // mes 13 = promedio anual, ignorar
+      if (month === '13') continue; // promedio anual
       const ym = `${year}-${month}`;
-      // NASA POWER da MJ/m²/día → multiplicar por días del mes → MJ/m²/mes
       const days = new Date(parseInt(year), parseInt(month), 0).getDate();
       monthly[ym] = parseFloat((val * days).toFixed(1));
     }
