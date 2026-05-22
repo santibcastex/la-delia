@@ -1,35 +1,47 @@
+const LAT = -36.905;
+const LON = -58.583;
+
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
   if (req.method === 'OPTIONS') return res.status(200).end();
 
-  const months = Math.min(60, parseInt(req.query.months || '24'));
-  const lat = -36.905;
-  const lon = -58.583;
-
   const now = new Date();
-  const endDate = new Date(now.getFullYear(), now.getMonth(), 1);
-  endDate.setDate(endDate.getDate() - 1); // last day of previous month
-  const startDate = new Date(endDate.getFullYear(), endDate.getMonth() - months + 1, 1);
+  const endYear = now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear();
+  const startYear = endYear - 5;
 
-  const fmt = d => d.toISOString().slice(0, 10);
+  // NASA POWER API — community AG, monthly, solar radiation MJ/m²/day
+  const url = `https://power.larc.nasa.gov/api/temporal/monthly/point`
+    + `?parameters=ALLSKY_SFC_SW_DWN`
+    + `&community=AG`
+    + `&longitude=${LON}&latitude=${LAT}`
+    + `&start=${startYear}&end=${endYear}`
+    + `&format=JSON`;
 
   try {
-    const url = `https://archive-api.open-meteo.com/v1/archive?latitude=${lat}&longitude=${lon}&start_date=${fmt(startDate)}&end_date=${fmt(endDate)}&daily=shortwave_radiation_sum&timezone=America%2FArgentina%2FBuenos_Aires`;
-    const r = await fetch(url);
-    if (!r.ok) return res.status(502).json({ error: 'Open-Meteo error', status: r.status });
+    const r = await fetch(url, { headers: { Accept: 'application/json' } });
+    if (!r.ok) {
+      const text = await r.text();
+      return res.status(502).json({ error: `NASA POWER ${r.status}`, detail: text.slice(0, 200) });
+    }
     const data = await r.json();
 
-    const monthly = {};
-    (data.daily?.time || []).forEach((date, i) => {
-      const ym = date.slice(0, 7);
-      const val = data.daily.shortwave_radiation_sum[i];
-      if (val != null) {
-        monthly[ym] = (monthly[ym] || 0) + val;
-      }
-    });
+    // Response: data.properties.parameter.ALLSKY_SFC_SW_DWN = { "201901": 18.5, ... }
+    const raw = data?.properties?.parameter?.ALLSKY_SFC_SW_DWN || {};
 
-    res.setHeader('Cache-Control', 'public, max-age=43200');
+    const monthly = {};
+    for (const [key, val] of Object.entries(raw)) {
+      if (!val || val < 0) continue; // -999 = sin dato
+      const year = key.slice(0, 4);
+      const month = key.slice(4, 6);
+      if (month === '13') continue; // mes 13 = promedio anual, ignorar
+      const ym = `${year}-${month}`;
+      // NASA POWER da MJ/m²/día → multiplicar por días del mes → MJ/m²/mes
+      const days = new Date(parseInt(year), parseInt(month), 0).getDate();
+      monthly[ym] = parseFloat((val * days).toFixed(1));
+    }
+
+    res.setHeader('Cache-Control', 'public, max-age=86400');
     res.json(monthly);
   } catch (err) {
     res.status(500).json({ error: err.message });
