@@ -2031,7 +2031,17 @@ function App() {
                         <div key={catNombre} style={{ backgroundColor: '#1e1e1e', borderRadius: '4px', border: '1px solid #2a2a2a', overflow: 'hidden' }}>
                           {/* Category header */}
                           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.4rem 0.65rem', backgroundColor: '#252525', borderBottom: entries.length ? '1px solid #2a2a2a' : 'none' }}>
-                            <span style={{ fontSize: '0.78rem', fontWeight: '700', color: '#aaa', textTransform: 'uppercase', letterSpacing: '0.4px' }}>{catNombre}</span>
+                            <div>
+                              <span style={{ fontSize: '0.78rem', fontWeight: '700', color: '#aaa', textTransform: 'uppercase', letterSpacing: '0.4px' }}>{catNombre}</span>
+                              {(() => {
+                                const potreros = [...new Set(entries.map(e => e.potrero).filter(Boolean))];
+                                return potreros.length > 0 ? (
+                                  <span style={{ display: 'block', fontSize: '0.68rem', color: '#4caf50', marginTop: '0.1rem' }}>
+                                    {potreros.map(p => `P${p}`).join(' · ')}
+                                  </span>
+                                ) : null;
+                              })()}
+                            </div>
                             <span style={{ fontSize: '0.9rem', fontWeight: '700', color: '#ffeb3b' }}>{total.toLocaleString()}</span>
                           </div>
                           {/* Rodeos */}
