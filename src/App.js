@@ -1501,13 +1501,15 @@ function NdviDatePicker({ value, onChange }) {
 
 // ─── Map View ─────────────────────────────────────────────────────────────────
 
-function MapView({ onPotreroClick, modoMover, ndviActive, ndviDate, ndviIndex, showBasemap, onHoverValue, ndviStats }) {
+function MapView({ onPotreroClick, modoMover, ndviActive, ndviDate, ndviIndex, showBasemap, onHoverValue, ndviStats, hacienda }) {
   const mapContainer = useRef(null);
   const map = useRef(null);
   const layersRef = useRef({});
   const labelsRef = useRef([]);
   const ndviLabelsRef = useRef([]);
   const ndviLayerRef = useRef(null);
+  const potrerosCentersRef = useRef({}); // { nombre: LatLng }
+  const cowMarkersRef = useRef([]);
   const baseTileRef = useRef(null);
   const onClickRef = useRef(onPotreroClick);
   const ndviActiveRef = useRef(ndviActive);
@@ -1591,6 +1593,49 @@ function MapView({ onPotreroClick, modoMover, ndviActive, ndviDate, ndviIndex, s
   }, [modoMover]);
 
   useEffect(() => {
+    if (!map.current) return;
+    cowMarkersRef.current.forEach(m => m.remove());
+    cowMarkersRef.current = [];
+    const ocupados = {};
+    (hacienda || []).forEach(h => {
+      if (!h.potrero) return;
+      if (!ocupados[h.potrero]) ocupados[h.potrero] = 0;
+      ocupados[h.potrero] += h.cantidad || 0;
+    });
+    Object.entries(ocupados).forEach(([potrero, total]) => {
+      const center = potrerosCentersRef.current[potrero];
+      if (!center) return;
+      const marker = L.marker([center.lat + 0.0015, center.lng], {
+        icon: L.divIcon({
+          html: `<div style="pointer-events:none;text-align:center">
+            <svg width="28" height="22" viewBox="0 0 28 22" xmlns="http://www.w3.org/2000/svg">
+              <ellipse cx="14" cy="13" rx="10" ry="7" fill="#8B4513" stroke="#fff" stroke-width="1"/>
+              <ellipse cx="6" cy="11" rx="3.5" ry="2.5" fill="#8B4513"/>
+              <ellipse cx="5" cy="9" rx="2.5" ry="3" fill="#8B4513"/>
+              <circle cx="4" cy="8" r="1.5" fill="#fff"/>
+              <circle cx="4.5" cy="8.2" r="0.6" fill="#222"/>
+              <rect x="8" y="18" width="2.5" height="4" rx="1" fill="#8B4513"/>
+              <rect x="12" y="19" width="2.5" height="4" rx="1" fill="#8B4513"/>
+              <rect x="16" y="19" width="2.5" height="4" rx="1" fill="#8B4513"/>
+              <rect x="20" y="18" width="2.5" height="4" rx="1" fill="#8B4513"/>
+              <ellipse cx="22" cy="12" rx="2" ry="1.5" fill="#8B4513"/>
+              <path d="M23 10 Q25 7 24 5" stroke="#8B4513" stroke-width="1.5" fill="none"/>
+              <path d="M21 10 Q22 7 21 5" stroke="#8B4513" stroke-width="1.5" fill="none"/>
+              <ellipse cx="5.5" cy="15" rx="2" ry="1.2" fill="#ffcccb" opacity="0.7"/>
+            </svg>
+            <div style="font-size:10px;font-weight:700;color:#ffeb3b;text-shadow:1px 1px 2px rgba(0,0,0,0.9);margin-top:1px">${total}</div>
+          </div>`,
+          className: '',
+          iconSize: [36, 42],
+          iconAnchor: [18, 42]
+        }),
+        interactive: false
+      }).addTo(map.current);
+      cowMarkersRef.current.push(marker);
+    });
+  }, [hacienda]);
+
+  useEffect(() => {
     map.current = L.map(mapContainer.current).setView([-36.905, -58.607], 13);
     baseTileRef.current = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
       attribution: 'Esri', maxZoom: 18
@@ -1625,6 +1670,7 @@ function MapView({ onPotreroClick, modoMover, ndviActive, ndviDate, ndviIndex, s
       });
 
       const center = firstPolygon.getBounds().getCenter();
+      potrerosCentersRef.current[props.nombre] = center;
       const label = L.marker(center, {
         icon: L.divIcon({
           html: `<div style="text-align:center;font-family:'Courier New',monospace;color:#ffeb3b;text-shadow:1px 1px 3px rgba(0,0,0,0.7);font-weight:bold;pointer-events:none"><div style="font-size:13px">${props.nombre}</div><div style="font-size:12px">${props.ha.toFixed(1)} ha</div></div>`,
@@ -1915,7 +1961,7 @@ function App() {
             <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
               {/* Map */}
               <div style={{ flex: 2, position: 'relative' }}>
-                <MapView onPotreroClick={handlePotreroClick} modoMover={modoMover} ndviActive={showNDVI} ndviDate={ndviDate} ndviIndex={ndviIndex} showBasemap={showBasemap} onHoverValue={setHoverValue} ndviStats={ndviStats} />
+                <MapView onPotreroClick={handlePotreroClick} modoMover={modoMover} ndviActive={showNDVI} ndviDate={ndviDate} ndviIndex={ndviIndex} showBasemap={showBasemap} onHoverValue={setHoverValue} ndviStats={ndviStats} hacienda={hacienda} />
 
                 {/* NDVI control panel */}
                 {showNDVI && (
