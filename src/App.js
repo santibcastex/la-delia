@@ -1608,26 +1608,12 @@ function MapView({ onPotreroClick, modoMover, ndviActive, ndviDate, ndviIndex, s
       const marker = L.marker([center.lat + 0.0015, center.lng], {
         icon: L.divIcon({
           html: `<div style="pointer-events:none;text-align:center">
-            <svg width="28" height="22" viewBox="0 0 28 22" xmlns="http://www.w3.org/2000/svg">
-              <ellipse cx="14" cy="13" rx="10" ry="7" fill="#8B4513" stroke="#fff" stroke-width="1"/>
-              <ellipse cx="6" cy="11" rx="3.5" ry="2.5" fill="#8B4513"/>
-              <ellipse cx="5" cy="9" rx="2.5" ry="3" fill="#8B4513"/>
-              <circle cx="4" cy="8" r="1.5" fill="#fff"/>
-              <circle cx="4.5" cy="8.2" r="0.6" fill="#222"/>
-              <rect x="8" y="18" width="2.5" height="4" rx="1" fill="#8B4513"/>
-              <rect x="12" y="19" width="2.5" height="4" rx="1" fill="#8B4513"/>
-              <rect x="16" y="19" width="2.5" height="4" rx="1" fill="#8B4513"/>
-              <rect x="20" y="18" width="2.5" height="4" rx="1" fill="#8B4513"/>
-              <ellipse cx="22" cy="12" rx="2" ry="1.5" fill="#8B4513"/>
-              <path d="M23 10 Q25 7 24 5" stroke="#8B4513" stroke-width="1.5" fill="none"/>
-              <path d="M21 10 Q22 7 21 5" stroke="#8B4513" stroke-width="1.5" fill="none"/>
-              <ellipse cx="5.5" cy="15" rx="2" ry="1.2" fill="#ffcccb" opacity="0.7"/>
-            </svg>
-            <div style="font-size:10px;font-weight:700;color:#ffeb3b;text-shadow:1px 1px 2px rgba(0,0,0,0.9);margin-top:1px">${total}</div>
+            <img src="/cow.png" width="36" height="36" style="display:block;margin:0 auto;filter:drop-shadow(1px 1px 2px rgba(0,0,0,0.7))"/>
+            <div style="font-size:11px;font-weight:700;color:#ffeb3b;text-shadow:1px 1px 2px rgba(0,0,0,0.9);margin-top:2px">${total}</div>
           </div>`,
           className: '',
-          iconSize: [36, 42],
-          iconAnchor: [18, 42]
+          iconSize: [36, 52],
+          iconAnchor: [18, 52]
         }),
         interactive: false
       }).addTo(map.current);
