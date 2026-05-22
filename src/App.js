@@ -86,7 +86,7 @@ const HACIENDA_INICIAL = [
   { id: 5, nombre: 'Vaquillonas +2 Años',  rodeo: null, cantidad: 219, peso_promedio: 420, potrero: null }
 ];
 
-const STYLE_NORMAL  = { color: '#c41e3a', weight: 2, opacity: 0.9, fillColor: '#2d5016', fillOpacity: 0.4 };
+const STYLE_NORMAL  = { color: '#fff', weight: 2, opacity: 0.9, fillColor: '#2d5016', fillOpacity: 0.4 };
 const STYLE_NDVI    = { color: '#fff',    weight: 1.5, opacity: 0.85, fillColor: '#000', fillOpacity: 0 };
 const STYLE_ORIGEN  = { color: '#ff9800', weight: 3, opacity: 1,   fillColor: '#ff9800', fillOpacity: 0.5 };
 const STYLE_DESTINO = { color: '#4caf50', weight: 2, opacity: 0.9, fillColor: '#4caf50', fillOpacity: 0.45 };
