@@ -1672,6 +1672,7 @@ function App() {
   const [draggedCategory, setDraggedCategory] = useState(null);
   const [addingRodeo, setAddingRodeo] = useState(null); // { catNombre, nombre, cantidad }
   const [dropOver, setDropOver] = useState(false);
+  const [editingCantidad, setEditingCantidad] = useState(null); // { docId, value }
   const [activeSection, setActiveSection] = useState('mapa'); // 'mapa' | 'forraje' | 'planilla'
   const [modoMover, setModoMover] = useState(null);
   const [showNDVI, setShowNDVI] = useState(false);
@@ -1771,6 +1772,14 @@ function App() {
       const docRef = await addDoc(collection(db, 'hacienda'), newEntry);
       setHacienda(prev => [...prev, { ...newEntry, id: docRef.id, docId: docRef.id }]);
     } catch (e) { console.error(e); }
+  };
+
+  const guardarCantidad = async (docId, value) => {
+    const cant = parseInt(value);
+    if (isNaN(cant) || cant < 0) return setEditingCantidad(null);
+    setHacienda(prev => prev.map(h => h.docId === docId ? { ...h, cantidad: cant } : h));
+    setEditingCantidad(null);
+    try { await updateDoc(doc(db, 'hacienda', docId), { cantidad: cant }); } catch (e) { console.error(e); }
   };
 
   const eliminarSubrodeo = async (entryId) => {
@@ -2044,7 +2053,23 @@ function App() {
                               </div>
                               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                                 <div style={{ textAlign: 'right' }}>
-                                  <span style={{ display: 'block', fontSize: '1rem', fontWeight: 'bold', color: '#fff' }}>{(entry.cantidad || 0).toLocaleString()}</span>
+                                  {editingCantidad?.docId === entry.docId ? (
+                                    <input
+                                      type="number"
+                                      autoFocus
+                                      value={editingCantidad.value}
+                                      onChange={e => setEditingCantidad(ec => ({ ...ec, value: e.target.value }))}
+                                      onBlur={() => guardarCantidad(entry.docId, editingCantidad.value)}
+                                      onKeyDown={e => { if (e.key === 'Enter') guardarCantidad(entry.docId, editingCantidad.value); if (e.key === 'Escape') setEditingCantidad(null); }}
+                                      style={{ width: '70px', background: '#333', border: '1px solid #4caf50', borderRadius: '3px', color: '#fff', fontSize: '1rem', fontWeight: 'bold', textAlign: 'right', padding: '0.1rem 0.3rem' }}
+                                    />
+                                  ) : (
+                                    <span
+                                      onClick={() => setEditingCantidad({ docId: entry.docId, value: entry.cantidad || 0 })}
+                                      title="Click para editar"
+                                      style={{ display: 'block', fontSize: '1rem', fontWeight: 'bold', color: '#fff', cursor: 'pointer', borderBottom: '1px dashed #444' }}
+                                    >{(entry.cantidad || 0).toLocaleString()}</span>
+                                  )}
                                   <span style={{ display: 'block', fontSize: '0.7rem', color: '#555' }}>{entry.peso_promedio} kg</span>
                                 </div>
                                 {(entry.rodeo || entries.length > 1) && (
