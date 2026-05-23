@@ -7,8 +7,7 @@ export default async function handler(req, res) {
   if (req.method === 'OPTIONS') return res.status(200).end();
 
   const now = new Date();
-  // NASA POWER puede no tener el año actual completo — usamos hasta el año anterior para garantizar datos
-  const endYear = now.getFullYear() - 1;
+  const endYear = now.getFullYear(); // NASA POWER publica con ~1 mes de retraso, pedimos el año actual igual
   const startYear = endYear - 5;
 
   // NASA POWER API — community AG, monthly, solar radiation MJ/m²/day
