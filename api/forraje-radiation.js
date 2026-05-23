@@ -36,14 +36,30 @@ export default async function handler(req, res) {
     const raw = data?.properties?.parameter?.ALLSKY_SFC_SW_DWN || {};
 
     const monthly = {};
+    // Primero cargar todos los datos disponibles
     for (const [key, val] of Object.entries(raw)) {
-      if (val == null || val < 0) continue; // -999 = sin dato
+      if (val == null || val < 0) continue;
       const year = key.slice(0, 4);
       const month = key.slice(4, 6);
-      if (month === '13') continue; // promedio anual
+      if (month === '13') continue;
       const ym = `${year}-${month}`;
       const days = new Date(parseInt(year), parseInt(month), 0).getDate();
       monthly[ym] = parseFloat((val * days).toFixed(1));
+    }
+
+    // Para meses recientes sin dato, usar promedio histórico del mismo mes calendario
+    const today = new Date();
+    for (let i = 0; i < 6; i++) {
+      const d = new Date(today.getFullYear(), today.getMonth() - i, 1);
+      const ym = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      if (monthly[ym]) continue;
+      const calMonth = String(d.getMonth() + 1).padStart(2, '0');
+      const historico = Object.entries(monthly)
+        .filter(([k]) => k.endsWith(`-${calMonth}`) && parseInt(k.slice(0, 4)) < d.getFullYear())
+        .map(([, v]) => v);
+      if (historico.length > 0) {
+        monthly[ym] = parseFloat((historico.reduce((a, b) => a + b, 0) / historico.length).toFixed(1));
+      }
     }
 
     res.setHeader('Cache-Control', 'public, max-age=86400');
