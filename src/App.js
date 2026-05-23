@@ -595,7 +595,7 @@ function ForrajePanel({ hacienda, historial }) {
             )}
             {!loadingCurrent && currentRad != null && radLabel !== currentYM && (
               <div style={{ padding: '0.5rem 0.75rem', backgroundColor: '#111', border: '1px solid #2a2a2a', borderRadius: '4px', fontSize: '0.75rem', color: '#666', marginBottom: '1rem' }}>
-                Radiación solar NASA POWER · datos hasta {radLabel}
+                Radiación solar NASA POWER{radiation[currentYM] ? '' : ` · ${radLabel} (promedio histórico)`}
               </div>
             )}
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem' }}>
