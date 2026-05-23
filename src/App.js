@@ -96,10 +96,9 @@ const STYLE_NDVI    = { color: '#fff',    weight: 1.5, opacity: 0.85, fillColor:
 const STYLE_ORIGEN  = { color: '#ff9800', weight: 3, opacity: 1,   fillColor: '#ff9800', fillOpacity: 0.5 };
 const STYLE_DESTINO = { color: '#4caf50', weight: 2, opacity: 0.9, fillColor: '#4caf50', fillOpacity: 0.45 };
 
-// Monteith (1972) model constants — Cristiano et al. 2012, C3 Pampa grasslands
+// Monteith (1972) model constants — FLASHFlux TISA (NASA POWER), RFAi = 50% RFA total
 const EUR = 0.68;
-const PAR_FRAC = 0.45;
-const ALBEDO = 0.22;
+const PAR_FRAC = 0.50; // RFAi = 50% de radiación total (Monteith 1972)
 const FPAR_MAX = 0.95;
 // Mott curve: monthly consumption Vacas c/Cría (kg MS/animal/día) ene-dic
 const MOTT_MENSUAL = [9.0, 9.5, 10.5, 11.5, 12.0, 12.5, 13.0, 13.5, 13.0, 12.0, 11.0, 10.0];
@@ -111,7 +110,7 @@ function calcFPAR(ndvi) {
 }
 
 function calcMS(ndvi, radiationMJm2Month) {
-  const par = radiationMJm2Month * (1 - ALBEDO) * PAR_FRAC;
+  const par = radiationMJm2Month * PAR_FRAC; // RFAi = 50% RFA total
   return calcFPAR(ndvi) * par * EUR * 10; // kg/ha/month
 }
 
@@ -637,7 +636,7 @@ function ForrajePanel({ hacienda, historial }) {
               </tbody>
             </table>
             <div style={{ marginTop: '0.75rem', fontSize: '0.72rem', color: '#444' }}>
-              Modelo Monteith (1972) · EUR = 0.68 g MS/MJ · fPAR Grigera · Radiación Open-Meteo Sentinel-2 L2A
+              Modelo Monteith (1972) · RFAi = 50% RFA total · EUR = 0.68 g MS/MJ · fPAR Grigera · NASA POWER FLASHFlux · Sentinel-2 L2A
             </div>
           </div>
         )}
