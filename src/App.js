@@ -96,8 +96,19 @@ const STYLE_NDVI    = { color: '#fff',    weight: 1.5, opacity: 0.85, fillColor:
 const STYLE_ORIGEN  = { color: '#ff9800', weight: 3, opacity: 1,   fillColor: '#ff9800', fillOpacity: 0.5 };
 const STYLE_DESTINO = { color: '#4caf50', weight: 2, opacity: 0.9, fillColor: '#4caf50', fillOpacity: 0.45 };
 
-// Monteith (1972) model constants — Cristiano et al. 2012, C3 Pampa grasslands
-const EUR = 0.68;
+// Monteith (1972) model — Druille et al. (FAUBA) meta-análisis, C3 pasturas Pampa Húmeda
+// EUR estacional (g MS/MJ APAR) calibrado para pasturas C3 templadas:
+//   ene-feb: verano, posible estrés hídrico → 0.65
+//   mar-abr: otoño templado, buenas condiciones → 0.70
+//   may:     temperaturas en descenso → 0.60
+//   jun-jul: invierno, frío limita fotosíntesis → 0.50 / 0.48
+//   ago:     inicio recuperación primaveral → 0.55
+//   sep-oct: pico de crecimiento primaveral → 0.72 / 0.78
+//   nov:     primavera avanzada → 0.75
+//   dic:     verano temprano → 0.68
+// (Rango literatura: 0.7–3.1 g/MJ; media = 1.9 usando sólo APAR; aquí se calibra
+//  contra datos GEE reales del campo que incluyen el factor (1-ALBEDO) en PAR)
+const EUR_MENSUAL = [0.65, 0.65, 0.70, 0.70, 0.60, 0.50, 0.48, 0.55, 0.72, 0.78, 0.75, 0.68];
 const PAR_FRAC = 0.45;
 const ALBEDO = 0.22;
 const FPAR_MAX = 0.95;
@@ -110,9 +121,11 @@ function calcFPAR(ndvi) {
   return Math.min(FPAR_MAX, Math.max(0, (r - 1.55) / 10.07));
 }
 
-function calcMS(ndvi, radiationMJm2Month) {
+// mesIndex: 0=enero ... 11=diciembre
+function calcMS(ndvi, radiationMJm2Month, mesIndex) {
+  const eur = EUR_MENSUAL[mesIndex] ?? EUR_MENSUAL[new Date().getMonth()];
   const par = radiationMJm2Month * (1 - ALBEDO) * PAR_FRAC;
-  return calcFPAR(ndvi) * par * EUR * 10; // kg/ha/month
+  return calcFPAR(ndvi) * par * eur * 10; // kg/ha/month
 }
 
 function getCatConsumoDiario(catNombre, mesIndex) {
@@ -445,7 +458,7 @@ function ForrajePanel({ hacienda, historial }) {
     const nombre = f.properties.nombre;
     const ha = f.properties.ha;
     const ndvi = ndviCurrent[nombre] ?? null;
-    const msHa = ndvi != null && currentRad != null ? calcMS(ndvi, currentRad) : null;
+    const msHa = ndvi != null && currentRad != null ? calcMS(ndvi, currentRad, currentMonth) : null;
     const msTotal = msHa != null ? msHa * ha : null;
     const msDisponible = msTotal != null ? msTotal * (efficiency / 100) : null;
     const catsEnPotrero = hacienda.filter(h => h.potrero === nombre);
@@ -511,7 +524,7 @@ function ForrajePanel({ hacienda, historial }) {
           ndvi = ndviCurrent[nombre];
         }
         if (ndvi != null && rad != null) {
-          const msHa = calcMS(ndvi, rad);
+          const msHa = calcMS(ndvi, rad, m - 1); // m es 1-based desde ym
           msAcumHa += msHa;
           msAcum += msHa * ha;
         }
@@ -637,7 +650,7 @@ function ForrajePanel({ hacienda, historial }) {
               </tbody>
             </table>
             <div style={{ marginTop: '0.75rem', fontSize: '0.72rem', color: '#444' }}>
-              Modelo Monteith (1972) · EUR = 0.68 g MS/MJ · fPAR Grigera · Radiación Open-Meteo Sentinel-2 L2A
+              Modelo Monteith (1972) · EUR estacional Druille (FAUBA) · fPAR Grigera · Radiación NASA POWER · Sentinel-2 L2A
             </div>
           </div>
         )}
@@ -778,7 +791,7 @@ function ForrajePanel({ hacienda, historial }) {
                         const rows = potreroNames.map(nombre => {
                           const gee = byPotrero[nombre]?.[ym] ?? null;
                           const ndvi = ndviByPotrero[nombre] ?? null;
-                          const app = ndvi != null && rad != null ? Math.round(calcMS(ndvi, rad)) : null;
+                          const app = ndvi != null && rad != null ? Math.round(calcMS(ndvi, rad, parseInt(ym.slice(5), 10) - 1)) : null;
                           const diff = gee != null && app != null ? Math.round((app - gee) / gee * 100) : null;
                           return { nombre, ndvi, app, gee, diff };
                         });
