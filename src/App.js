@@ -1911,7 +1911,7 @@ function MapView({ onPotreroClick, modoMover, ndviActive, ndviDate, ndviIndex, s
     map.current = L.map(mapContainer.current, {
   zoomSnap: 0.25,
   zoomDelta: 0.25
-}).setView([-36.903, -58.582], 14);
+}).setView([-36.903, -58.582], 13,75);
     baseTileRef.current = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
       attribution: 'Esri', maxZoom: 20
     }).addTo(map.current);
