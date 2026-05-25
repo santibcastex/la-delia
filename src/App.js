@@ -403,7 +403,16 @@ function ForrajePanel({ hacienda, historial }) {
   useEffect(() => {
     fetch('/api/forraje-radiation?months=24')
       .then(r => r.json())
-      .then(setRadiation)
+      .then(data => {
+        // Si la API devuelve un error en vez de datos de radiación, ignorarlo
+        // (evita que strings de error lleguen a calcMS y produzcan NaN)
+        if (data && typeof data.error === 'string') {
+          console.warn('Radiation API error:', data.error, data.detail ?? '');
+          setRadiation({});
+        } else {
+          setRadiation(data);
+        }
+      })
       .catch(() => {});
   }, []);
 

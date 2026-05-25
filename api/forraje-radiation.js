@@ -19,7 +19,14 @@ export default async function handler(req, res) {
     + `&format=JSON`;
 
   try {
-    const r = await fetch(url, { headers: { Accept: 'application/json' } });
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 9000); // 9 s — safe margin under Vercel 10 s limit
+    let r;
+    try {
+      r = await fetch(url, { headers: { Accept: 'application/json' }, signal: controller.signal });
+    } finally {
+      clearTimeout(timeout);
+    }
     const text = await r.text();
 
     if (req.query.debug === '1') {
@@ -62,7 +69,7 @@ export default async function handler(req, res) {
       }
     }
 
-    res.setHeader('Cache-Control', 'public, max-age=86400');
+    res.setHeader('Cache-Control', 'public, max-age=43200');
     res.json(monthly);
   } catch (err) {
     res.status(500).json({ error: err.message });
