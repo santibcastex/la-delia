@@ -1133,8 +1133,8 @@ function PlanillaPanel({ db }) {
     setSelectedYM(nextYM);
   };
 
-  const TD = { style: { padding: '3px 6px', textAlign: 'right', fontSize: '0.72rem', borderRight: '1px solid #1a1a1a', minWidth: '38px', cursor: 'pointer', userSelect: 'none' } };
-  const TH_CAT = { style: { padding: '4px 5px', fontSize: '0.62rem', fontWeight: '600', color: '#888', textAlign: 'right', borderRight: '1px solid #1a1a1a', whiteSpace: 'nowrap', maxWidth: '62px', overflow: 'hidden', letterSpacing: '0.2px' } };
+  const TD = { style: { padding: '3px 6px', textAlign: 'right', fontSize: '0.72rem', borderRight: '1px solid #333', borderBottom: '1px solid #2a2a2a', minWidth: '38px', cursor: 'pointer', userSelect: 'none' } };
+  const TH_CAT = { style: { padding: '4px 5px', fontSize: '0.62rem', fontWeight: '600', color: '#888', textAlign: 'right', borderRight: '1px solid #333', borderBottom: '2px solid #444', whiteSpace: 'nowrap', maxWidth: '62px', overflow: 'hidden', letterSpacing: '0.2px' } };
 
   if (loading) return <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#555' }}>Cargando planilla...</div>;
 
@@ -1277,7 +1277,7 @@ function PlanillaPanel({ db }) {
           <tbody>
             {/* Apertura */}
             <tr style={{ backgroundColor: '#111', borderBottom: '2px solid #333' }}>
-              <td style={{ padding: '4px 8px', fontWeight: '700', color: '#ffeb3b', fontSize: '0.75rem', position: 'sticky', left: 0, backgroundColor: '#111', zIndex: 1, borderRight: '2px solid #222' }}>Apertura</td>
+              <td style={{ padding: '4px 8px', fontWeight: '700', color: '#ffeb3b', fontSize: '0.75rem', position: 'sticky', left: 0, backgroundColor: '#111', zIndex: 1, borderRight: '2px solid #444', borderBottom: '2px solid #333' }}>Apertura</td>
               <td style={{ ...TD.style, color: '#ffeb3b', fontWeight: '700' }}>{totalStock(entry.apertura || {})}</td>
               {PLANILLA_CATS.map(c => {
                 const val = (entry.apertura?.[c.key]) || 0;
