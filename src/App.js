@@ -96,6 +96,12 @@ const STYLE_NDVI    = { color: '#fff',    weight: 1.5, opacity: 0.85, fillColor:
 const STYLE_ORIGEN  = { color: '#ff9800', weight: 3, opacity: 1,   fillColor: '#ff9800', fillOpacity: 0.5 };
 const STYLE_DESTINO = { color: '#4caf50', weight: 2, opacity: 0.9, fillColor: '#4caf50', fillOpacity: 0.45 };
 
+function pastoColorFn(ratio) {
+  const t = Math.max(0, Math.min(1, ratio));
+  if (t < 0.5) { return `rgb(200,${Math.round(t * 2 * 200)},0)`; }
+  return `rgb(${Math.round((1 - (t - 0.5) * 2) * 200)},180,0)`;
+}
+
 // Monteith (1972) model — Druille et al. (FAUBA) meta-análisis, C3 pasturas Pampa Húmeda
 // EUR estacional (g MS/MJ APAR) calibrado para pasturas C3 templadas:
 //   ene-feb: verano, posible estrés hídrico → 0.65
@@ -398,6 +404,11 @@ function ForrajePanel({ hacienda, historial }) {
   const [selectedYear, setSelectedYear] = useState(null);
   const [validacion, setValidacion] = useState({ results: {}, running: false, progress: 0, total: 0 });
   const [valSelMonths, setValSelMonths] = useState(null); // null = not yet initialized
+  const [simPotrero, setSimPotrero] = useState('');
+  const [simAnimales, setSimAnimales] = useState([{ cat: 'Vacas c/Cría', cantidad: 100 }]);
+  const [simMode, setSimMode] = useState('dias');
+  const [simTargetDias, setSimTargetDias] = useState(30);
+  const [simTargetCat, setSimTargetCat] = useState('Vacas c/Cría');
 
   // Fetch radiation on mount
   useEffect(() => {
@@ -545,6 +556,8 @@ function ForrajePanel({ hacienda, historial }) {
 
   const tabs = [
     { id: 'actual', label: 'Estado Actual' },
+    { id: 'ranking', label: 'Ranking Pasto' },
+    { id: 'simulador', label: 'Simulador' },
     { id: 'curva', label: 'Curva Forrajera' },
     { id: 'potrero', label: 'Por Potrero' },
     { id: 'descanso', label: 'Período Descanso' },
@@ -663,6 +676,204 @@ function ForrajePanel({ hacienda, historial }) {
             </div>
           </div>
         )}
+
+        {/* ── RANKING PASTO ── */}
+        {activeTab === 'ranking' && (() => {
+          const ranked = estadoActual
+            .filter(r => r.msDisponible != null)
+            .sort((a, b) => (b.msDisponible ?? 0) - (a.msDisponible ?? 0));
+          const maxMs = ranked.length ? Math.max(...ranked.map(r => r.msDisponible)) : 1;
+          const diasColor = d => d == null ? '#666' : d < 7 ? '#ff4444' : d < 15 ? '#ff9800' : '#4caf50';
+          return (
+            <div>
+              {loadingCurrent && (
+                <div style={{ padding: '0.75rem', backgroundColor: '#0f1a0f', border: '1px solid #2a3a2a', borderRadius: '4px', fontSize: '0.8rem', color: '#888', marginBottom: '1rem' }}>
+                  ⏳ Calculando NDVI por potrero...
+                </div>
+              )}
+              <div style={{ fontSize: '0.75rem', color: '#555', marginBottom: '0.75rem' }}>
+                Todos los potreros ordenados por pasto disponible · eficiencia {efficiency}% · mes actual
+              </div>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem' }}>
+                <thead>
+                  <tr style={{ backgroundColor: '#1a1a1a' }}>
+                    {['#', 'Potrero', 'Ha', 'Estado', 'NDVIc', 'MS/ha', 'MS disponible (kg)', 'Consumo/día', 'Días'].map(h => (
+                      <th key={h} style={{ padding: '0.5rem 0.6rem', textAlign: ['#','Potrero','Estado'].includes(h) ? 'left' : 'right', color: '#777', fontWeight: '600', textTransform: 'uppercase', fontSize: '0.68rem', letterSpacing: '0.4px', borderBottom: '1px solid #2a2a2a', whiteSpace: 'nowrap' }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {ranked.map((row, i) => {
+                    const ratio = row.msDisponible / maxMs;
+                    return (
+                      <tr key={row.nombre} style={{ backgroundColor: i % 2 === 0 ? '#111' : '#131313', borderBottom: '1px solid #1e1e1e' }}>
+                        <td style={{ padding: '0.4rem 0.6rem', color: '#555', fontWeight: '700' }}>{i + 1}</td>
+                        <td style={{ padding: '0.4rem 0.6rem', fontWeight: '700', color: '#ffeb3b' }}>{row.nombre}</td>
+                        <td style={{ padding: '0.4rem 0.6rem', color: '#888', textAlign: 'right' }}>{row.ha.toFixed(1)}</td>
+                        <td style={{ padding: '0.4rem 0.6rem', color: row.ocupado ? '#ff9800' : '#4caf50', fontSize: '0.75rem' }}>
+                          {row.ocupado ? '● Ocupado' : '○ Libre'}
+                        </td>
+                        <td style={{ padding: '0.4rem 0.6rem', color: '#4caf50', textAlign: 'right' }}>{row.ndvi != null ? row.ndvi.toFixed(3) : '—'}</td>
+                        <td style={{ padding: '0.4rem 0.6rem', color: '#fff', textAlign: 'right' }}>{row.msHa != null ? Math.round(row.msHa).toLocaleString() : '—'}</td>
+                        <td style={{ padding: '0.4rem 0.6rem', textAlign: 'right' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', justifyContent: 'flex-end' }}>
+                            <div style={{ width: '60px', height: '7px', backgroundColor: '#1a1a1a', borderRadius: '2px', flexShrink: 0 }}>
+                              <div style={{ width: `${ratio * 100}%`, height: '100%', backgroundColor: pastoColorFn(ratio), borderRadius: '2px' }} />
+                            </div>
+                            <span style={{ color: '#fff', minWidth: '60px', textAlign: 'right' }}>{Math.round(row.msDisponible).toLocaleString()}</span>
+                          </div>
+                        </td>
+                        <td style={{ padding: '0.4rem 0.6rem', color: '#aaa', textAlign: 'right' }}>{row.consumoDiario > 0 ? Math.round(row.consumoDiario).toLocaleString() : '—'}</td>
+                        <td style={{ padding: '0.4rem 0.6rem', textAlign: 'right', fontWeight: '700', color: diasColor(row.diasRestantes) }}>
+                          {row.diasRestantes != null ? `${row.diasRestantes}d` : row.ocupado ? '—' : '∞'}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+              <div style={{ marginTop: '0.75rem', fontSize: '0.72rem', color: '#444' }}>
+                ∞ = sin hacienda asignada · Modelo Monteith · Radiación NASA POWER · Sentinel-2 L2A
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* ── SIMULADOR ── */}
+        {activeTab === 'simulador' && (() => {
+          const simPotreroFeat = POSTREROS_GEOJSON.features.find(f => f.properties.nombre === simPotrero);
+          const simHa = simPotreroFeat?.properties.ha ?? 0;
+          const simNdvi = ndviCurrent[simPotrero] ?? null;
+          const simMsHa = simNdvi != null && currentRad != null ? calcMS(simNdvi, currentRad, currentMonth) : null;
+          const simMsDisp = simMsHa != null ? simMsHa * simHa * (efficiency / 100) : null;
+          const simConsumoDiario = simAnimales.reduce((sum, a) => sum + (parseInt(a.cantidad) || 0) * getCatConsumoDiario(a.cat, currentMonth), 0);
+          const simDiasResult = simMsDisp != null && simConsumoDiario > 0 ? Math.floor(simMsDisp / simConsumoDiario) : null;
+          const simConsumoUnitario = getCatConsumoDiario(simTargetCat, currentMonth);
+          const simMaxAnimales = simMsDisp != null && simConsumoUnitario > 0 && simTargetDias > 0 ? Math.floor(simMsDisp / (simConsumoUnitario * simTargetDias)) : null;
+          const inputStyle = { backgroundColor: '#1a1a1a', border: '1px solid #333', borderRadius: '4px', color: '#fff', padding: '0.35rem 0.6rem', fontSize: '0.82rem' };
+          const labelStyle = { fontSize: '0.75rem', color: '#666', marginBottom: '0.3rem' };
+          return (
+            <div style={{ maxWidth: '600px' }}>
+              <div style={{ fontSize: '0.8rem', color: '#555', marginBottom: '1.25rem' }}>
+                Simulá cuántos días puede aguantar un potrero con una carga dada, o cuántos animales podés meter para X días.
+              </div>
+
+              {/* Potrero selector */}
+              <div style={{ marginBottom: '1.25rem' }}>
+                <div style={labelStyle}>Potrero</div>
+                <select value={simPotrero} onChange={e => setSimPotrero(e.target.value)} style={{ ...inputStyle, width: '100%' }}>
+                  <option value="">— Seleccioná un potrero —</option>
+                  {POSTREROS_GEOJSON.features.map(f => (
+                    <option key={f.properties.nombre} value={f.properties.nombre}>
+                      {f.properties.nombre} · {f.properties.ha.toFixed(1)} ha
+                    </option>
+                  ))}
+                </select>
+                {simPotrero && (
+                  <div style={{ marginTop: '0.5rem', fontSize: '0.78rem', color: '#555', display: 'flex', gap: '1.5rem' }}>
+                    <span>NDVIc: <span style={{ color: simNdvi != null ? '#4caf50' : '#555' }}>{simNdvi != null ? simNdvi.toFixed(3) : '—'}</span></span>
+                    <span>MS producida: <span style={{ color: '#fff' }}>{simMsHa != null ? `${Math.round(simMsHa).toLocaleString()} kg/ha` : '—'}</span></span>
+                    <span>MS disponible: <span style={{ color: '#4caf50', fontWeight: '700' }}>{simMsDisp != null ? `${Math.round(simMsDisp).toLocaleString()} kg` : '—'}</span></span>
+                  </div>
+                )}
+              </div>
+
+              {/* Mode toggle */}
+              <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1.25rem' }}>
+                {[{ id: 'dias', label: '¿Cuántos días aguanta?' }, { id: 'animales', label: '¿Cuántos animales por X días?' }].map(m => (
+                  <button key={m.id} onClick={() => setSimMode(m.id)} style={{
+                    padding: '0.35rem 0.9rem', fontSize: '0.8rem', fontWeight: '600',
+                    backgroundColor: simMode === m.id ? '#1a3a1a' : 'transparent',
+                    color: simMode === m.id ? '#4caf50' : '#555',
+                    border: `1px solid ${simMode === m.id ? '#4caf50' : '#2a2a2a'}`,
+                    borderRadius: '4px', cursor: 'pointer'
+                  }}>{m.label}</button>
+                ))}
+              </div>
+
+              {simMode === 'dias' && (
+                <div>
+                  <div style={labelStyle}>Hacienda a simular</div>
+                  {simAnimales.map((a, i) => (
+                    <div key={i} style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.4rem', alignItems: 'center' }}>
+                      <select value={a.cat} onChange={e => setSimAnimales(prev => prev.map((x, j) => j === i ? { ...x, cat: e.target.value } : x))} style={inputStyle}>
+                        {Object.keys(CONSUMO_DIARIO).map(c => <option key={c} value={c}>{c}</option>)}
+                      </select>
+                      <input type="number" min={0} value={a.cantidad} onChange={e => setSimAnimales(prev => prev.map((x, j) => j === i ? { ...x, cantidad: e.target.value } : x))} style={{ ...inputStyle, width: '80px' }} placeholder="Cant." />
+                      <span style={{ fontSize: '0.72rem', color: '#555' }}>{getCatConsumoDiario(a.cat, currentMonth)} kg/día c/u</span>
+                      {simAnimales.length > 1 && (
+                        <button onClick={() => setSimAnimales(prev => prev.filter((_, j) => j !== i))} style={{ background: 'none', border: 'none', color: '#555', cursor: 'pointer', fontSize: '1rem' }}>✕</button>
+                      )}
+                    </div>
+                  ))}
+                  <button onClick={() => setSimAnimales(prev => [...prev, { cat: 'Vacas c/Cría', cantidad: 50 }])} style={{ fontSize: '0.75rem', color: '#4caf50', background: 'none', border: '1px solid #2a4a2a', borderRadius: '4px', padding: '0.25rem 0.6rem', cursor: 'pointer', marginTop: '0.25rem' }}>+ Agregar categoría</button>
+
+                  {simPotrero && simMsDisp != null && (
+                    <div style={{ marginTop: '1.25rem', padding: '1rem', backgroundColor: '#0f1a0f', border: '1px solid #2a4a2a', borderRadius: '6px' }}>
+                      <div style={{ display: 'flex', gap: '2rem', flexWrap: 'wrap' }}>
+                        <div>
+                          <div style={{ fontSize: '0.72rem', color: '#555', marginBottom: '0.2rem' }}>Consumo total/día</div>
+                          <div style={{ fontSize: '1.1rem', fontWeight: '700', color: '#fff' }}>{Math.round(simConsumoDiario).toLocaleString()} kg</div>
+                        </div>
+                        <div>
+                          <div style={{ fontSize: '0.72rem', color: '#555', marginBottom: '0.2rem' }}>Días que aguanta</div>
+                          <div style={{ fontSize: '2rem', fontWeight: '700', color: simDiasResult == null ? '#555' : simDiasResult < 7 ? '#ff4444' : simDiasResult < 15 ? '#ff9800' : '#4caf50' }}>
+                            {simDiasResult != null ? `${simDiasResult}d` : simConsumoDiario === 0 ? '∞' : '—'}
+                          </div>
+                        </div>
+                        {simDiasResult != null && (
+                          <div>
+                            <div style={{ fontSize: '0.72rem', color: '#555', marginBottom: '0.2rem' }}>Fecha estimada salida</div>
+                            <div style={{ fontSize: '1rem', fontWeight: '700', color: '#aaa' }}>
+                              {new Date(Date.now() + simDiasResult * 86400000).toLocaleDateString('es-AR', { day: '2-digit', month: 'short' })}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {simMode === 'animales' && (
+                <div>
+                  <div style={{ display: 'flex', gap: '1rem', marginBottom: '1rem', flexWrap: 'wrap' }}>
+                    <div>
+                      <div style={labelStyle}>Categoría</div>
+                      <select value={simTargetCat} onChange={e => setSimTargetCat(e.target.value)} style={inputStyle}>
+                        {Object.keys(CONSUMO_DIARIO).map(c => <option key={c} value={c}>{c}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <div style={labelStyle}>Días objetivo</div>
+                      <input type="number" min={1} value={simTargetDias} onChange={e => setSimTargetDias(Number(e.target.value))} style={{ ...inputStyle, width: '80px' }} />
+                    </div>
+                  </div>
+                  {simPotrero && simMsDisp != null && (
+                    <div style={{ marginTop: '0.5rem', padding: '1rem', backgroundColor: '#0f1a0f', border: '1px solid #2a4a2a', borderRadius: '6px' }}>
+                      <div style={{ display: 'flex', gap: '2rem', flexWrap: 'wrap' }}>
+                        <div>
+                          <div style={{ fontSize: '0.72rem', color: '#555', marginBottom: '0.2rem' }}>Consumo unitario/día</div>
+                          <div style={{ fontSize: '1rem', fontWeight: '700', color: '#fff' }}>{simConsumoUnitario} kg</div>
+                        </div>
+                        <div>
+                          <div style={{ fontSize: '0.72rem', color: '#555', marginBottom: '0.2rem' }}>Máx. animales por {simTargetDias} días</div>
+                          <div style={{ fontSize: '2rem', fontWeight: '700', color: '#4caf50' }}>
+                            {simMaxAnimales != null ? simMaxAnimales.toLocaleString() : '—'}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {!simPotrero && (
+                <div style={{ marginTop: '1rem', fontSize: '0.8rem', color: '#444' }}>Seleccioná un potrero para empezar.</div>
+              )}
+            </div>
+          );
+        })()}
 
         {/* ── CURVA FORRAJERA ── */}
         {activeTab === 'curva' && (
@@ -1523,10 +1734,11 @@ function NdviDatePicker({ value, onChange }) {
 
 // ─── Map View ─────────────────────────────────────────────────────────────────
 
-function MapView({ onPotreroClick, modoMover, ndviActive, ndviDate, ndviIndex, showBasemap, onHoverValue, ndviStats, hacienda }) {
+function MapView({ onPotreroClick, modoMover, ndviActive, ndviDate, ndviIndex, showBasemap, onHoverValue, ndviStats, hacienda, pastoData }) {
   const mapContainer = useRef(null);
   const map = useRef(null);
   const layersRef = useRef({});
+  const pastoLabelsRef = useRef([]);
   const labelsRef = useRef([]);
   const ndviLabelsRef = useRef([]);
   const ndviLayerRef = useRef(null);
@@ -1560,16 +1772,37 @@ function MapView({ onPotreroClick, modoMover, ndviActive, ndviDate, ndviIndex, s
 
   useEffect(() => {
     if (!map.current) return;
-    Object.values(layersRef.current).forEach(polys =>
-      polys.forEach(p => p.setStyle(ndviActive ? STYLE_NDVI : STYLE_NORMAL))
-    );
+    // Compute max MS for pasto color scale
+    const pastoVals = pastoData ? Object.values(pastoData).map(d => d.msDisponible).filter(v => v != null && v > 0) : [];
+    const maxMs = pastoVals.length ? Math.max(...pastoVals) : 1;
+
+    // Apply polygon styles: modoMover > pasto > ndvi > normal
+    Object.entries(layersRef.current).forEach(([nombre, polys]) => {
+      let style;
+      if (modoMover) {
+        style = nombre === modoMover ? STYLE_ORIGEN : STYLE_DESTINO;
+      } else if (pastoData) {
+        const d = pastoData[nombre];
+        const fillColor = d?.msDisponible != null ? pastoColorFn(d.msDisponible / maxMs) : '#333';
+        style = { color: '#fff', weight: 2, opacity: 0.9, fillColor, fillOpacity: 0.75 };
+      } else if (ndviActive) {
+        style = STYLE_NDVI;
+      } else {
+        style = STYLE_NORMAL;
+      }
+      polys.forEach(p => p.setStyle(style));
+    });
+
+    // Normal name/ha labels: show only when neither ndvi nor pasto active
     labelsRef.current.forEach(m => {
       const el = m.getElement();
-      if (el) el.style.display = ndviActive ? 'none' : '';
+      if (el) el.style.display = (ndviActive || pastoData) ? 'none' : '';
     });
+
+    // NDVI value labels
     ndviLabelsRef.current.forEach(m => map.current.removeLayer(m));
     ndviLabelsRef.current = [];
-    if (ndviActive && ndviIndex !== 'NATURAL') {
+    if (ndviActive && ndviIndex !== 'NATURAL' && !pastoData) {
       POSTREROS_GEOJSON.features.forEach(f => {
         const nombre = f.properties.nombre;
         const ring = f.geometry.coordinates[0][0];
@@ -1589,7 +1822,38 @@ function MapView({ onPotreroClick, modoMover, ndviActive, ndviDate, ndviIndex, s
         ndviLabelsRef.current.push(marker);
       });
     }
-  }, [ndviActive, ndviIndex]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    // Pasto labels: show MS disponible + días restantes per potrero
+    pastoLabelsRef.current.forEach(m => map.current.removeLayer(m));
+    pastoLabelsRef.current = [];
+    if (pastoData && !modoMover) {
+      POSTREROS_GEOJSON.features.forEach(f => {
+        const nombre = f.properties.nombre;
+        const d = pastoData[nombre];
+        const center = potrerosCentersRef.current[nombre];
+        if (!center) return;
+        const ms = d?.msDisponible;
+        const dias = d?.diasRestantes;
+        const msText = ms != null ? `${(ms / 1000).toFixed(0)}t` : '—';
+        const diasText = dias != null ? `${dias}d` : '∞';
+        const diasColor = dias == null ? '#4caf50' : dias < 7 ? '#ff4444' : dias < 15 ? '#ff9800' : '#4caf50';
+        const marker = L.marker(center, {
+          icon: L.divIcon({
+            html: `<div style="text-align:center;font-family:'Courier New',monospace;pointer-events:none">
+              <div style="font-size:13px;font-weight:700;color:#fff;text-shadow:1px 1px 3px #000">${nombre}</div>
+              <div style="font-size:12px;font-weight:700;color:${diasColor};text-shadow:1px 1px 3px #000">${diasText}</div>
+              <div style="font-size:11px;color:#eee;text-shadow:1px 1px 2px #000">${msText} disp.</div>
+            </div>`,
+            className: '',
+            iconSize: [80, 54],
+            iconAnchor: [40, 27]
+          }),
+          interactive: false
+        }).addTo(map.current);
+        pastoLabelsRef.current.push(marker);
+      });
+    }
+  }, [ndviActive, ndviIndex, modoMover, pastoData]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     ndviLabelsRef.current.forEach(marker => {
@@ -1605,14 +1869,6 @@ function MapView({ onPotreroClick, modoMover, ndviActive, ndviDate, ndviIndex, s
     });
   }, [ndviStats]);
 
-  useEffect(() => {
-    Object.entries(layersRef.current).forEach(([nombre, polys]) => {
-      const style = modoMover
-        ? (nombre === modoMover ? STYLE_ORIGEN : STYLE_DESTINO)
-        : (ndviActiveRef.current ? STYLE_NDVI : STYLE_NORMAL);
-      polys.forEach(p => p.setStyle(style));
-    });
-  }, [modoMover]);
 
   useEffect(() => {
     if (!map.current) return;
@@ -1740,6 +1996,9 @@ function App() {
   const [showBasemap, setShowBasemap] = useState(true);
   const [hoverValue, setHoverValue] = useState(null);
   const [ndviStats, setNdviStats] = useState({});
+  const [showPasto, setShowPasto] = useState(false);
+  const [pastoRad, setPastoRad] = useState({});
+  const [pastoNdvi, setPastoNdvi] = useState(null);
 
 
   useEffect(() => {
@@ -1762,6 +2021,25 @@ function App() {
       body: JSON.stringify({ polygons: potreroPolygons(), index: ndviIndex, date: ndviDate })
     }).then(r => r.json()).then(setNdviStats).catch(() => {});
   }, [showNDVI, ndviDate, ndviIndex]);
+
+  // Pasto map mode: fetch radiation once on mount
+  useEffect(() => {
+    fetch('/api/forraje-radiation?months=24')
+      .then(r => r.json())
+      .then(data => { if (!data?.error) setPastoRad(data); })
+      .catch(() => {});
+  }, []);
+
+  // Pasto map mode: fetch current NDVI once when first activated
+  useEffect(() => {
+    if (!showPasto || pastoNdvi !== null) return;
+    const currentDate = getNdviDates()[0];
+    fetch('/api/ndvi-stats', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ polygons: potreroPolygons(), index: 'NDVIc', date: currentDate })
+    }).then(r => r.json()).then(setPastoNdvi).catch(() => setPastoNdvi({}));
+  }, [showPasto, pastoNdvi]);
 
   const cargarHaciendaDeFirestore = async () => {
     try {
@@ -1880,6 +2158,31 @@ function App() {
 
   const totalAnimales = hacienda.reduce((sum, h) => sum + (h.cantidad || 0), 0);
 
+  const pastoData = (() => {
+    if (!showPasto || !pastoNdvi) return null;
+    const now = new Date();
+    const curMonth = now.getMonth();
+    const curYM = now.toISOString().slice(0, 7);
+    const radKeys = Object.keys(pastoRad).sort();
+    const rad = pastoRad[curYM] ?? (radKeys.length > 0 ? pastoRad[radKeys[radKeys.length - 1]] : null);
+    if (rad == null) return null;
+    const result = {};
+    POSTREROS_GEOJSON.features.forEach(f => {
+      const nombre = f.properties.nombre;
+      const ha = f.properties.ha;
+      const ndvi = pastoNdvi[nombre] ?? null;
+      const msHa = ndvi != null ? calcMS(ndvi, rad, curMonth) : null;
+      const msDisponible = msHa != null ? msHa * ha * 0.5 : null;
+      const catsEnPotrero = hacienda.filter(h => h.potrero === nombre);
+      const consumoDiario = catsEnPotrero.reduce(
+        (sum, cat) => sum + (cat.cantidad || 0) * getCatConsumoDiario(cat.nombre, curMonth), 0
+      );
+      const diasRestantes = msDisponible != null && consumoDiario > 0 ? Math.round(msDisponible / consumoDiario) : null;
+      result[nombre] = { msHa, msDisponible, consumoDiario, diasRestantes };
+    });
+    return result;
+  })();
+
 
 
   if (!authReady) {
@@ -1926,9 +2229,14 @@ function App() {
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
           <span style={{ fontSize: '0.85rem', color: '#666' }}>{user.displayName || user.email}</span>
           {activeSection === 'mapa' && (
-            <button onClick={() => setShowNDVI(v => !v)} style={{ padding: '0.4rem 0.85rem', backgroundColor: showNDVI ? '#4caf50' : '#1e1e1e', color: showNDVI ? '#000' : '#aaa', border: `1px solid ${showNDVI ? '#4caf50' : '#333'}`, borderRadius: '3px', cursor: 'pointer', fontSize: '0.8rem', fontWeight: '600' }}>
-              🌿 {showNDVI ? 'NDVI ON' : 'NDVI'}
-            </button>
+            <>
+              <button onClick={() => setShowNDVI(v => !v)} style={{ padding: '0.4rem 0.85rem', backgroundColor: showNDVI ? '#4caf50' : '#1e1e1e', color: showNDVI ? '#000' : '#aaa', border: `1px solid ${showNDVI ? '#4caf50' : '#333'}`, borderRadius: '3px', cursor: 'pointer', fontSize: '0.8rem', fontWeight: '600' }}>
+                🌿 {showNDVI ? 'NDVI ON' : 'NDVI'}
+              </button>
+              <button onClick={() => setShowPasto(v => !v)} style={{ padding: '0.4rem 0.85rem', backgroundColor: showPasto ? '#ff9800' : '#1e1e1e', color: showPasto ? '#000' : '#aaa', border: `1px solid ${showPasto ? '#ff9800' : '#333'}`, borderRadius: '3px', cursor: 'pointer', fontSize: '0.8rem', fontWeight: '600' }}>
+                🌾 {showPasto ? 'Pasto ON' : 'Pasto'}
+              </button>
+            </>
           )}
           <button onClick={handleSignOut} style={{ padding: '0.4rem 0.85rem', backgroundColor: '#c41e3a', color: '#fff', border: 'none', borderRadius: '3px', cursor: 'pointer', fontSize: '0.8rem', fontWeight: '600' }}>
             Salir
@@ -1969,7 +2277,7 @@ function App() {
             <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
               {/* Map */}
               <div style={{ flex: 2, position: 'relative' }}>
-                <MapView onPotreroClick={handlePotreroClick} modoMover={modoMover} ndviActive={showNDVI} ndviDate={ndviDate} ndviIndex={ndviIndex} showBasemap={showBasemap} onHoverValue={setHoverValue} ndviStats={ndviStats} hacienda={hacienda} />
+                <MapView onPotreroClick={handlePotreroClick} modoMover={modoMover} ndviActive={showNDVI} ndviDate={ndviDate} ndviIndex={ndviIndex} showBasemap={showBasemap} onHoverValue={setHoverValue} ndviStats={ndviStats} hacienda={hacienda} pastoData={pastoData} />
 
                 {/* NDVI control panel */}
                 {showNDVI && (
