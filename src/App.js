@@ -1899,7 +1899,7 @@ function MapView({ onPotreroClick, modoMover, ndviActive, ndviDate, ndviIndex, s
           </div>`,
           className: '',
           iconSize: [36, 52],
-          iconAnchor: [18, 52]
+          iconAnchor: [18, 36]
         }),
         interactive: false
       }).addTo(map.current);
