@@ -1133,8 +1133,15 @@ function PlanillaPanel({ db }) {
     setSelectedYM(nextYM);
   };
 
-  const TD = { style: { padding: '3px 6px', textAlign: 'right', fontSize: '0.72rem', borderRight: '1px solid #333', borderBottom: '1px solid #2a2a2a', minWidth: '38px', cursor: 'pointer', userSelect: 'none' } };
-  const TH_CAT = { style: { padding: '4px 5px', fontSize: '0.62rem', fontWeight: '600', color: '#888', textAlign: 'right', borderRight: '1px solid #333', borderBottom: '2px solid #444', whiteSpace: 'nowrap', maxWidth: '62px', overflow: 'hidden', letterSpacing: '0.2px' } };
+  const groupLastKeys = new Set(
+    [...new Set(PLANILLA_CATS.map(c => c.grupo))].map(g => {
+      const cats = PLANILLA_CATS.filter(c => c.grupo === g);
+      return cats[cats.length - 1].key;
+    })
+  );
+  const colBorder = (key) => groupLastKeys.has(key) ? '2px solid #777' : '1px solid #444';
+  const TD = { style: { padding: '3px 6px', textAlign: 'right', fontSize: '0.72rem', borderRight: '1px solid #444', borderBottom: '1px solid #333', minWidth: '38px', cursor: 'pointer', userSelect: 'none' } };
+  const TH_CAT = { style: { padding: '4px 5px', fontSize: '0.62rem', fontWeight: '600', color: '#888', textAlign: 'right', borderRight: '1px solid #444', borderBottom: '2px solid #555', whiteSpace: 'nowrap', maxWidth: '62px', overflow: 'hidden', letterSpacing: '0.2px' } };
 
   if (loading) return <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#555' }}>Cargando planilla...</div>;
 
@@ -1190,9 +1197,10 @@ function PlanillaPanel({ db }) {
   const renderCell = (section, type, key, bgColor) => {
     const val = (entry[section]?.[type]?.[key]) || 0;
     const isEditing = editCell?.section === section && editCell?.type === type && editCell?.key === key;
+    const bdr = colBorder(key);
     if (isEditing) {
       return (
-        <td key={key} style={{ ...TD.style, backgroundColor: '#2a3a2a', padding: '1px 3px' }}>
+        <td key={key} style={{ ...TD.style, borderRight: bdr, backgroundColor: '#2a3a2a', padding: '1px 3px' }}>
           <input
             autoFocus
             type="number"
@@ -1206,7 +1214,7 @@ function PlanillaPanel({ db }) {
       );
     }
     return (
-      <td key={key} style={{ ...TD.style, color: val > 0 ? '#fff' : '#2a2a2a', backgroundColor: val > 0 ? bgColor : 'transparent' }} onClick={() => startEdit(section, type, key, val)}>
+      <td key={key} style={{ ...TD.style, borderRight: bdr, color: val > 0 ? '#fff' : '#2a2a2a', backgroundColor: val > 0 ? bgColor : 'transparent' }} onClick={() => startEdit(section, type, key, val)}>
         {val > 0 ? val : '·'}
       </td>
     );
@@ -1265,13 +1273,13 @@ function PlanillaPanel({ db }) {
               <th style={{ backgroundColor: '#0d0d0d', border: 'none' }} />
               {grupos.map(g => {
                 const cols = PLANILLA_CATS.filter(c => c.grupo === g);
-                return <th key={g} colSpan={cols.length} style={{ padding: '4px', fontSize: '0.62rem', fontWeight: '700', color: '#666', textAlign: 'center', borderBottom: '1px solid #222', borderRight: '1px solid #333', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{g}</th>;
+                return <th key={g} colSpan={cols.length} style={{ padding: '4px', fontSize: '0.62rem', fontWeight: '700', color: '#888', textAlign: 'center', borderBottom: '1px solid #444', borderRight: '2px solid #777', textTransform: 'uppercase', letterSpacing: '0.5px', backgroundColor: '#111' }}>{g}</th>;
               })}
             </tr>
             <tr style={{ backgroundColor: '#111' }}>
               <th style={{ padding: '4px 8px', textAlign: 'left', fontSize: '0.65rem', color: '#555', fontWeight: '600', textTransform: 'uppercase', position: 'sticky', left: 0, backgroundColor: '#111', zIndex: 3, borderRight: '2px solid #222' }}>Concepto</th>
               <th style={{ ...TH_CAT.style, textAlign: 'center' }}>Total</th>
-              {PLANILLA_CATS.map(c => <th key={c.key} {...TH_CAT}>{c.label}</th>)}
+              {PLANILLA_CATS.map(c => <th key={c.key} style={{ ...TH_CAT.style, borderRight: colBorder(c.key) }}>{c.label}</th>)}
             </tr>
           </thead>
           <tbody>
@@ -1281,7 +1289,7 @@ function PlanillaPanel({ db }) {
               <td style={{ ...TD.style, color: '#ffeb3b', fontWeight: '700' }}>{totalStock(entry.apertura || {})}</td>
               {PLANILLA_CATS.map(c => {
                 const val = (entry.apertura?.[c.key]) || 0;
-                return <td key={c.key} style={{ ...TD.style, color: val > 0 ? '#ffeb3b' : '#2a2a2a' }}>{val > 0 ? val : '·'}</td>;
+                return <td key={c.key} style={{ ...TD.style, borderRight: colBorder(c.key), color: val > 0 ? '#ffeb3b' : '#2a2a2a' }}>{val > 0 ? val : '·'}</td>;
               })}
             </tr>
 
@@ -1303,7 +1311,7 @@ function PlanillaPanel({ db }) {
               </td>
               {PLANILLA_CATS.map(c => {
                 const tot = SECTION_ROWS.filter(r=>r.section==='entradas').reduce((s,r)=>s+((entry.entradas?.[r.type]?.[c.key])||0),0);
-                return <td key={c.key} style={{ ...TD.style, color: tot > 0 ? '#4caf50' : '#2a2a2a', fontWeight: tot > 0 ? '700' : '400' }}>{tot > 0 ? tot : '·'}</td>;
+                return <td key={c.key} style={{ ...TD.style, borderRight: colBorder(c.key), color: tot > 0 ? '#4caf50' : '#2a2a2a', fontWeight: tot > 0 ? '700' : '400' }}>{tot > 0 ? tot : '·'}</td>;
               })}
             </tr>
 
@@ -1325,7 +1333,7 @@ function PlanillaPanel({ db }) {
               </td>
               {PLANILLA_CATS.map(c => {
                 const tot = SECTION_ROWS.filter(r=>r.section==='salidas').reduce((s,r)=>s+((entry.salidas?.[r.type]?.[c.key])||0),0);
-                return <td key={c.key} style={{ ...TD.style, color: tot > 0 ? '#ff6b6b' : '#2a2a2a', fontWeight: tot > 0 ? '700' : '400' }}>{tot > 0 ? tot : '·'}</td>;
+                return <td key={c.key} style={{ ...TD.style, borderRight: colBorder(c.key), color: tot > 0 ? '#ff6b6b' : '#2a2a2a', fontWeight: tot > 0 ? '700' : '400' }}>{tot > 0 ? tot : '·'}</td>;
               })}
             </tr>
 
@@ -1335,7 +1343,7 @@ function PlanillaPanel({ db }) {
               <td style={{ ...TD.style, color: '#4caf50', fontWeight: '700', fontSize: '0.78rem' }}>{totalStock(cierre)}</td>
               {PLANILLA_CATS.map(c => {
                 const val = cierre[c.key] || 0;
-                return <td key={c.key} style={{ ...TD.style, color: val > 0 ? '#4caf50' : val < 0 ? '#ff4444' : '#2a2a2a', fontWeight: val > 0 ? '700' : '400' }}>{val !== 0 ? val : '·'}</td>;
+                return <td key={c.key} style={{ ...TD.style, borderRight: colBorder(c.key), color: val > 0 ? '#4caf50' : val < 0 ? '#ff4444' : '#2a2a2a', fontWeight: val > 0 ? '700' : '400' }}>{val !== 0 ? val : '·'}</td>;
               })}
             </tr>
 
