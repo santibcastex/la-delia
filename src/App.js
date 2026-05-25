@@ -1908,7 +1908,10 @@ function MapView({ onPotreroClick, modoMover, ndviActive, ndviDate, ndviIndex, s
   }, [hacienda]);
 
   useEffect(() => {
-    map.current = L.map(mapContainer.current).setView([-36.903, -58.582], 14);
+    map.current = L.map(mapContainer.current, {
+  zoomSnap: 0.25,
+  zoomDelta: 0.25
+}).setView([-36.903, -58.582], 14);
     baseTileRef.current = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
       attribution: 'Esri', maxZoom: 20
     }).addTo(map.current);
