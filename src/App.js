@@ -1929,12 +1929,11 @@ function MapView({ onPotreroClick, modoMover, ndviActive, ndviDate, ndviIndex, s
         polygon.on('click', () => onClickRef.current(props));
         polygon.on('mouseover', function () {
           if (ndviActiveRef.current) return;
-          this.setStyle({ weight: 3, fillOpacity: 0.65 });
+          this.setStyle({ weight: 3 });
         });
         polygon.on('mouseout', function () {
           if (ndviActiveRef.current) return;
-          const s = layersRef.current[props.nombre]?.[0]?.options || STYLE_NORMAL;
-          this.setStyle({ weight: s.weight || 2, fillOpacity: s.fillOpacity || 0.4 });
+          this.setStyle({ weight: 2 });
         });
         polygon.addTo(map.current);
         layersRef.current[props.nombre].push(polygon);
