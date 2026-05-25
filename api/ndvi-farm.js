@@ -103,12 +103,9 @@ const EVALSCRIPTS = {
 function setup(){return{input:[{bands:["B04","B03","B02","dataMask"]}],output:{bands:4,sampleType:"UINT8"}}}
 function evaluatePixel(s){
   if(!s.dataMask)return[0,0,0,0];
-  return[
-    Math.min(255,Math.round(s.B04*3.5*255)),
-    Math.min(255,Math.round(s.B03*3.5*255)),
-    Math.min(255,Math.round(s.B02*3.5*255)),
-    255
-  ];
+  const gain=3.5,gamma=0.75;
+  function adj(v){return Math.min(255,Math.round(Math.pow(Math.max(0,v*gain),gamma)*255));}
+  return[adj(s.B04),adj(s.B03),adj(s.B02),255];
 }`,
   SWIR: `//VERSION=3
 function setup(){return{input:[{bands:["B04","B08","B11","dataMask"]}],output:{bands:4,sampleType:"UINT8"}}}
@@ -188,8 +185,8 @@ export default async function handler(req, res) {
         }]
       },
       output: {
-        width: 720,
-        height: 610,
+        width: 1440,
+        height: 1220,
         responses: [{ identifier: 'default', format: { type: 'image/png' } }]
       },
       evalscript
