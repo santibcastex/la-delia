@@ -2335,6 +2335,41 @@ function App() {
                     <button onClick={() => setModoMover(null)} style={{ background:'rgba(0,0,0,0.2)', border:'none', color:'#000', cursor:'pointer', borderRadius:'3px', padding:'0.2rem 0.5rem', fontWeight:'700' }}>✕ Cancelar</button>
                   </div>
                 )}
+
+                {showPasto && pastoData && (() => {
+                  const vals = Object.values(pastoData).map(d => d.msDisponible).filter(v => v != null && v > 0);
+                  const minMs = vals.length ? Math.min(...vals) : 0;
+                  const maxMs = vals.length ? Math.max(...vals) : 0;
+                  return (
+                    <div style={{ position: 'absolute', bottom: '1.5rem', right: '1rem', zIndex: 1000, backgroundColor: 'rgba(13,13,13,0.92)', borderRadius: '8px', padding: '0.8rem 1rem', color: '#fff', minWidth: '190px', boxShadow: '0 4px 20px rgba(0,0,0,0.6)' }}>
+                      <div style={{ fontWeight: '700', color: '#ff9800', marginBottom: '0.6rem', fontSize: '0.8rem', letterSpacing: '0.3px' }}>🌾 Pasto disponible</div>
+
+                      {/* Gradient bar */}
+                      <div style={{ height: '12px', borderRadius: '4px', background: 'linear-gradient(to right, rgb(200,0,0), rgb(200,200,0), rgb(0,180,0))', marginBottom: '0.25rem' }} />
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.65rem', color: '#888', marginBottom: '0.1rem' }}>
+                        <span>Poco</span><span>Medio</span><span>Mucho</span>
+                      </div>
+                      {vals.length > 0 && (
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.65rem', color: '#555' }}>
+                          <span>{(minMs / 1000).toFixed(0)}t</span>
+                          <span>{(maxMs / 1000).toFixed(0)}t</span>
+                        </div>
+                      )}
+
+                      {/* Days legend */}
+                      <div style={{ marginTop: '0.65rem', borderTop: '1px solid #222', paddingTop: '0.55rem' }}>
+                        <div style={{ fontSize: '0.68rem', color: '#666', marginBottom: '0.35rem', fontWeight: '600' }}>Días restantes</div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem', fontSize: '0.7rem' }}>
+                          <span style={{ color: '#ff4444' }}>● &lt; 7 días — crítico</span>
+                          <span style={{ color: '#ff9800' }}>● &lt; 15 días — alerta</span>
+                          <span style={{ color: '#4caf50' }}>● &gt; 15 días — ok</span>
+                          <span style={{ color: '#4caf50' }}>∞ — sin hacienda</span>
+                        </div>
+                      </div>
+                      <div style={{ marginTop: '0.5rem', fontSize: '0.62rem', color: '#444' }}>Eficiencia 50% · mes actual</div>
+                    </div>
+                  );
+                })()}
               </div>
 
               {/* Right panel */}
