@@ -1373,9 +1373,9 @@ function PlanillaPanel({ db }) {
       return cats[cats.length - 1].key;
     })
   );
-  const colBorder = (key) => groupLastKeys.has(key) ? '2px solid #777' : '1px solid #444';
-  const TD = { style: { padding: '3px 6px', textAlign: 'right', fontSize: '0.72rem', borderRight: '1px solid #444', borderBottom: '1px solid #333', minWidth: '38px', cursor: 'pointer', userSelect: 'none' } };
-  const TH_CAT = { style: { padding: '4px 5px', fontSize: '0.62rem', fontWeight: '600', color: '#888', textAlign: 'right', borderRight: '1px solid #444', borderBottom: '2px solid #555', whiteSpace: 'nowrap', maxWidth: '62px', overflow: 'hidden', letterSpacing: '0.2px' } };
+  const colBorder = (key) => groupLastKeys.has(key) ? '2px solid #999' : '1px solid #ddd';
+  const TD = { style: { padding: '3px 6px', textAlign: 'right', fontSize: '0.72rem', borderRight: '1px solid #ddd', borderBottom: '1px solid #e8e8e8', minWidth: '38px', cursor: 'pointer', userSelect: 'none' } };
+  const TH_CAT = { style: { padding: '4px 5px', fontSize: '0.62rem', fontWeight: '600', color: '#444', textAlign: 'right', borderRight: '1px solid #ddd', borderBottom: '2px solid #ccc', whiteSpace: 'nowrap', maxWidth: '62px', overflow: 'hidden', letterSpacing: '0.2px' } };
 
   if (loading) return <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#555' }}>Cargando planilla...</div>;
 
@@ -1409,17 +1409,17 @@ function PlanillaPanel({ db }) {
   const grupos = [...new Set(PLANILLA_CATS.map(c => c.grupo))];
 
   const SECTION_ROWS = [
-    { section: 'entradas', type: 'nacimientos',  label: 'Nacimientos',    color: '#1e3a1e' },
-    { section: 'entradas', type: 'traslados',    label: 'Traslados +',    color: '#1e3a1e' },
-    { section: 'entradas', type: 'compras',      label: 'Compras',        color: '#1e3a1e' },
-    { section: 'entradas', type: 'recuento',     label: 'Recuento +',     color: '#1e3a1e' },
-    { section: 'entradas', type: 'clasificacion',label: 'Clasif +',       color: '#1e3a1e' },
-    { section: 'salidas',  type: 'mortandad',    label: 'Mortandad',      color: '#3a1e1e' },
-    { section: 'salidas',  type: 'traslados',    label: 'Traslados −',    color: '#3a1e1e' },
-    { section: 'salidas',  type: 'ventas',       label: 'Ventas',         color: '#3a1e1e' },
-    { section: 'salidas',  type: 'consumo',      label: 'Consumo',        color: '#3a1e1e' },
-    { section: 'salidas',  type: 'recuento',     label: 'Recuento −',     color: '#3a1e1e' },
-    { section: 'salidas',  type: 'clasificacion',label: 'Clasif −',       color: '#3a1e1e' },
+    { section: 'entradas', type: 'nacimientos',  label: 'Nacimientos',    color: '#f1f8f1' },
+    { section: 'entradas', type: 'traslados',    label: 'Traslados +',    color: '#f1f8f1' },
+    { section: 'entradas', type: 'compras',      label: 'Compras',        color: '#f1f8f1' },
+    { section: 'entradas', type: 'recuento',     label: 'Recuento +',     color: '#f1f8f1' },
+    { section: 'entradas', type: 'clasificacion',label: 'Clasif +',       color: '#f1f8f1' },
+    { section: 'salidas',  type: 'mortandad',    label: 'Mortandad',      color: '#fff5f5' },
+    { section: 'salidas',  type: 'traslados',    label: 'Traslados −',    color: '#fff5f5' },
+    { section: 'salidas',  type: 'ventas',       label: 'Ventas',         color: '#fff5f5' },
+    { section: 'salidas',  type: 'consumo',      label: 'Consumo',        color: '#fff5f5' },
+    { section: 'salidas',  type: 'recuento',     label: 'Recuento −',     color: '#fff5f5' },
+    { section: 'salidas',  type: 'clasificacion',label: 'Clasif −',       color: '#fff5f5' },
   ];
 
   const fmtMonth = (ym) => {
@@ -1432,9 +1432,10 @@ function PlanillaPanel({ db }) {
     const val = (entry[section]?.[type]?.[key]) || 0;
     const isEditing = editCell?.section === section && editCell?.type === type && editCell?.key === key;
     const bdr = colBorder(key);
+    const textColor = section === 'salidas' ? '#c62828' : '#111';
     if (isEditing) {
       return (
-        <td key={key} style={{ ...TD.style, borderRight: bdr, backgroundColor: '#2a3a2a', padding: '1px 3px' }}>
+        <td key={key} style={{ ...TD.style, borderRight: bdr, backgroundColor: bgColor, padding: '1px 3px' }}>
           <input
             autoFocus
             type="number"
@@ -1442,13 +1443,13 @@ function PlanillaPanel({ db }) {
             onChange={e => setEditValue(e.target.value)}
             onBlur={commitEdit}
             onKeyDown={e => { if (e.key === 'Enter') commitEdit(); if (e.key === 'Escape') setEditCell(null); }}
-            style={{ width: '36px', backgroundColor: '#111', color: '#fff', border: '1px solid #4caf50', borderRadius: '2px', fontSize: '0.72rem', textAlign: 'right', padding: '1px 3px' }}
+            style={{ width: '36px', backgroundColor: '#fff', color: '#111', border: `1px solid ${section === 'salidas' ? '#c62828' : '#2e7d32'}`, borderRadius: '2px', fontSize: '0.72rem', textAlign: 'right', padding: '1px 3px' }}
           />
         </td>
       );
     }
     return (
-      <td key={key} style={{ ...TD.style, borderRight: bdr, color: val > 0 ? '#fff' : '#2a2a2a', backgroundColor: val > 0 ? bgColor : 'transparent' }} onClick={() => startEdit(section, type, key, val)}>
+      <td key={key} style={{ ...TD.style, borderRight: bdr, color: val > 0 ? textColor : '#ccc', backgroundColor: val > 0 ? bgColor : 'transparent' }} onClick={() => startEdit(section, type, key, val)}>
         {val > 0 ? val : '·'}
       </td>
     );
@@ -1457,35 +1458,35 @@ function PlanillaPanel({ db }) {
   const totalRow = (rowObj) => PLANILLA_KEYS.reduce((s, k) => s + ((entry[rowObj.section]?.[rowObj.type]?.[k]) || 0), 0);
 
   return (
-    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', backgroundColor: '#0a0a0a' }}>
+    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', backgroundColor: '#f5f5f5' }}>
       {/* Top bar */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.6rem 1rem', borderBottom: '1px solid #1e1e1e', flexShrink: 0, flexWrap: 'wrap' }}>
-        <span style={{ fontSize: '0.8rem', color: '#666', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Mes:</span>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.6rem 1rem', borderBottom: '1px solid #ddd', flexShrink: 0, flexWrap: 'wrap', backgroundColor: '#fff' }}>
+        <span style={{ fontSize: '0.8rem', color: '#333', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Mes:</span>
         <select
           value={currentYM || ''}
           onChange={e => setSelectedYM(e.target.value)}
-          style={{ backgroundColor: '#111', color: '#fff', border: '1px solid #333', borderRadius: '3px', padding: '0.3rem 0.5rem', fontSize: '0.82rem', cursor: 'pointer' }}
+          style={{ backgroundColor: '#fff', color: '#111', border: '1px solid #ccc', borderRadius: '3px', padding: '0.3rem 0.5rem', fontSize: '0.82rem', cursor: 'pointer' }}
         >
           {months.map(ym => <option key={ym} value={ym}>{fmtMonth(ym)}</option>)}
         </select>
         <div style={{ display: 'flex', gap: '1.5rem', marginLeft: '1rem' }}>
-          <span style={{ fontSize: '0.8rem', color: '#aaa' }}>Apertura: <strong style={{ color: '#ffeb3b' }}>{totalStock(entry.apertura || {})}</strong></span>
-          <span style={{ fontSize: '0.8rem', color: '#aaa' }}>Cierre: <strong style={{ color: '#4caf50' }}>{totalStock(cierre)}</strong></span>
-          <span style={{ fontSize: '0.8rem', color: '#aaa' }}>EV/ha: <strong style={{ color: '#81d4fa' }}>{evHa}</strong></span>
+          <span style={{ fontSize: '0.8rem', color: '#555' }}>Apertura: <strong style={{ color: '#111' }}>{totalStock(entry.apertura || {})}</strong></span>
+          <span style={{ fontSize: '0.8rem', color: '#555' }}>Cierre: <strong style={{ color: '#2e7d32' }}>{totalStock(cierre)}</strong></span>
+          <span style={{ fontSize: '0.8rem', color: '#555' }}>EV/ha: <strong style={{ color: '#0277bd' }}>{evHa}</strong></span>
         </div>
         <div style={{ marginLeft: 'auto', display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
           <button
             onClick={agregarMes}
-            style={{ padding: '0.3rem 0.7rem', backgroundColor: '#1a2a3a', color: '#81d4fa', border: '1px solid #4fc3f7', borderRadius: '3px', cursor: 'pointer', fontSize: '0.75rem', fontWeight: '600' }}
+            style={{ padding: '0.3rem 0.7rem', backgroundColor: '#e3f2fd', color: '#0277bd', border: '1px solid #90caf9', borderRadius: '3px', cursor: 'pointer', fontSize: '0.75rem', fontWeight: '600' }}
           >
             + Mes nuevo
           </button>
           {importing ? (
-            <span style={{ fontSize: '0.78rem', color: '#888' }}>{importProgress}</span>
+            <span style={{ fontSize: '0.78rem', color: '#555' }}>{importProgress}</span>
           ) : (
             <button
               onClick={importHistorico}
-              style={{ padding: '0.3rem 0.7rem', backgroundColor: '#1e2e1e', color: '#4caf50', border: '1px solid #4caf50', borderRadius: '3px', cursor: 'pointer', fontSize: '0.75rem', fontWeight: '600' }}
+              style={{ padding: '0.3rem 0.7rem', backgroundColor: '#e8f5e9', color: '#2e7d32', border: '1px solid #a5d6a7', borderRadius: '3px', cursor: 'pointer', fontSize: '0.75rem', fontWeight: '600' }}
             >
               ⬆ Re-importar
             </button>
@@ -1502,90 +1503,90 @@ function PlanillaPanel({ db }) {
             {PLANILLA_CATS.map(c => <col key={c.key} style={{ width: '42px' }} />)}
           </colgroup>
           <thead style={{ position: 'sticky', top: 0, zIndex: 2 }}>
-            <tr style={{ backgroundColor: '#0d0d0d' }}>
-              <th style={{ backgroundColor: '#0d0d0d', border: 'none' }} />
-              <th style={{ backgroundColor: '#0d0d0d', border: 'none' }} />
+            <tr style={{ backgroundColor: '#f5f5f5' }}>
+              <th style={{ backgroundColor: '#f5f5f5', border: 'none' }} />
+              <th style={{ backgroundColor: '#f5f5f5', border: 'none' }} />
               {grupos.map(g => {
                 const cols = PLANILLA_CATS.filter(c => c.grupo === g);
-                return <th key={g} colSpan={cols.length} style={{ padding: '4px', fontSize: '0.62rem', fontWeight: '700', color: '#888', textAlign: 'center', borderBottom: '1px solid #444', borderRight: '2px solid #777', textTransform: 'uppercase', letterSpacing: '0.5px', backgroundColor: '#111' }}>{g}</th>;
+                return <th key={g} colSpan={cols.length} style={{ padding: '4px', fontSize: '0.62rem', fontWeight: '700', color: '#555', textAlign: 'center', borderBottom: '1px solid #ddd', borderRight: '2px solid #999', textTransform: 'uppercase', letterSpacing: '0.5px', backgroundColor: '#f5f5f5' }}>{g}</th>;
               })}
             </tr>
-            <tr style={{ backgroundColor: '#111' }}>
-              <th style={{ padding: '4px 8px', textAlign: 'left', fontSize: '0.65rem', color: '#555', fontWeight: '600', textTransform: 'uppercase', position: 'sticky', left: 0, backgroundColor: '#111', zIndex: 3, borderRight: '2px solid #222' }}>Concepto</th>
+            <tr style={{ backgroundColor: '#f5f5f5' }}>
+              <th style={{ padding: '4px 8px', textAlign: 'left', fontSize: '0.65rem', color: '#333', fontWeight: '600', textTransform: 'uppercase', position: 'sticky', left: 0, backgroundColor: '#f5f5f5', zIndex: 3, borderRight: '2px solid #ccc' }}>Concepto</th>
               <th style={{ ...TH_CAT.style, textAlign: 'center' }}>Total</th>
               {PLANILLA_CATS.map(c => <th key={c.key} style={{ ...TH_CAT.style, borderRight: colBorder(c.key) }}>{c.label}</th>)}
             </tr>
           </thead>
           <tbody>
             {/* Apertura */}
-            <tr style={{ backgroundColor: '#111', borderBottom: '2px solid #333' }}>
-              <td style={{ padding: '4px 8px', fontWeight: '700', color: '#ffeb3b', fontSize: '0.75rem', position: 'sticky', left: 0, backgroundColor: '#111', zIndex: 1, borderRight: '2px solid #222' }}>Apertura</td>
-              <td style={{ ...TD.style, color: '#ffeb3b', fontWeight: '700' }}>{totalStock(entry.apertura || {})}</td>
+            <tr style={{ backgroundColor: '#fff', borderBottom: '2px solid #ddd' }}>
+              <td style={{ padding: '4px 8px', fontWeight: '700', color: '#111', fontSize: '0.75rem', position: 'sticky', left: 0, backgroundColor: '#fff', zIndex: 1, borderRight: '2px solid #ccc' }}>Apertura</td>
+              <td style={{ ...TD.style, color: '#111', fontWeight: '700' }}>{totalStock(entry.apertura || {})}</td>
               {PLANILLA_CATS.map(c => {
                 const val = (entry.apertura?.[c.key]) || 0;
-                return <td key={c.key} style={{ ...TD.style, borderRight: colBorder(c.key), color: val > 0 ? '#ffeb3b' : '#2a2a2a' }}>{val > 0 ? val : '·'}</td>;
+                return <td key={c.key} style={{ ...TD.style, borderRight: colBorder(c.key), color: val > 0 ? '#111' : '#ccc' }}>{val > 0 ? val : '·'}</td>;
               })}
             </tr>
 
             {/* Entradas header */}
-            <tr style={{ backgroundColor: '#0d1a0d' }}>
-              <td colSpan={2 + PLANILLA_CATS.length} style={{ padding: '3px 8px', color: '#4caf50', fontSize: '0.68rem', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.5px' }}>+ Entradas</td>
+            <tr style={{ backgroundColor: '#e8f5e9' }}>
+              <td colSpan={2 + PLANILLA_CATS.length} style={{ padding: '3px 8px', color: '#2e7d32', fontSize: '0.68rem', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.5px' }}>+ Entradas</td>
             </tr>
             {SECTION_ROWS.filter(r => r.section === 'entradas').map(row => (
               <tr key={`e-${row.type}`} style={{ backgroundColor: row.color }}>
-                <td style={{ padding: '2px 8px 2px 16px', color: '#5a8a5a', fontSize: '0.7rem', position: 'sticky', left: 0, backgroundColor: row.color, zIndex: 1, borderRight: '2px solid #222' }}>{row.label}</td>
-                <td style={{ ...TD.style, color: '#5a8a5a' }}>{totalRow(row) || '·'}</td>
+                <td style={{ padding: '2px 8px 2px 16px', color: '#111', fontSize: '0.7rem', position: 'sticky', left: 0, backgroundColor: row.color, zIndex: 1, borderRight: '2px solid #ccc' }}>{row.label}</td>
+                <td style={{ ...TD.style, color: '#111' }}>{totalRow(row) || '·'}</td>
                 {PLANILLA_CATS.map(c => renderCell(row.section, row.type, c.key, row.color))}
               </tr>
             ))}
-            <tr style={{ backgroundColor: '#162016', borderBottom: '2px solid #1e3a1e' }}>
-              <td style={{ padding: '3px 8px', fontWeight: '700', color: '#4caf50', fontSize: '0.72rem', position: 'sticky', left: 0, backgroundColor: '#162016', zIndex: 1, borderRight: '2px solid #222' }}>Total entradas</td>
-              <td style={{ ...TD.style, color: '#4caf50', fontWeight: '700' }}>
+            <tr style={{ backgroundColor: '#c8e6c9', borderBottom: '2px solid #a5d6a7' }}>
+              <td style={{ padding: '3px 8px', fontWeight: '700', color: '#1b5e20', fontSize: '0.72rem', position: 'sticky', left: 0, backgroundColor: '#c8e6c9', zIndex: 1, borderRight: '2px solid #ccc' }}>Total entradas</td>
+              <td style={{ ...TD.style, color: '#1b5e20', fontWeight: '700' }}>
                 {PLANILLA_KEYS.reduce((s, k) => s + SECTION_ROWS.filter(r=>r.section==='entradas').reduce((ss,r)=>ss+((entry.entradas?.[r.type]?.[k])||0),0), 0)}
               </td>
               {PLANILLA_CATS.map(c => {
                 const tot = SECTION_ROWS.filter(r=>r.section==='entradas').reduce((s,r)=>s+((entry.entradas?.[r.type]?.[c.key])||0),0);
-                return <td key={c.key} style={{ ...TD.style, borderRight: colBorder(c.key), color: tot > 0 ? '#4caf50' : '#2a2a2a', fontWeight: tot > 0 ? '700' : '400' }}>{tot > 0 ? tot : '·'}</td>;
+                return <td key={c.key} style={{ ...TD.style, borderRight: colBorder(c.key), color: tot > 0 ? '#1b5e20' : '#ccc', fontWeight: tot > 0 ? '700' : '400' }}>{tot > 0 ? tot : '·'}</td>;
               })}
             </tr>
 
             {/* Salidas header */}
-            <tr style={{ backgroundColor: '#1a0d0d' }}>
-              <td colSpan={2 + PLANILLA_CATS.length} style={{ padding: '3px 8px', color: '#ff6b6b', fontSize: '0.68rem', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.5px' }}>− Salidas</td>
+            <tr style={{ backgroundColor: '#ffebee' }}>
+              <td colSpan={2 + PLANILLA_CATS.length} style={{ padding: '3px 8px', color: '#c62828', fontSize: '0.68rem', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.5px' }}>− Salidas</td>
             </tr>
             {SECTION_ROWS.filter(r => r.section === 'salidas').map(row => (
               <tr key={`s-${row.type}`} style={{ backgroundColor: row.color }}>
-                <td style={{ padding: '2px 8px 2px 16px', color: '#8a5a5a', fontSize: '0.7rem', position: 'sticky', left: 0, backgroundColor: row.color, zIndex: 1, borderRight: '2px solid #222' }}>{row.label}</td>
-                <td style={{ ...TD.style, color: '#8a5a5a' }}>{totalRow(row) || '·'}</td>
+                <td style={{ padding: '2px 8px 2px 16px', color: '#c62828', fontSize: '0.7rem', position: 'sticky', left: 0, backgroundColor: row.color, zIndex: 1, borderRight: '2px solid #ccc' }}>{row.label}</td>
+                <td style={{ ...TD.style, color: '#c62828' }}>{totalRow(row) || '·'}</td>
                 {PLANILLA_CATS.map(c => renderCell(row.section, row.type, c.key, row.color))}
               </tr>
             ))}
-            <tr style={{ backgroundColor: '#201616', borderBottom: '2px solid #3a1e1e' }}>
-              <td style={{ padding: '3px 8px', fontWeight: '700', color: '#ff6b6b', fontSize: '0.72rem', position: 'sticky', left: 0, backgroundColor: '#201616', zIndex: 1, borderRight: '2px solid #222' }}>Total salidas</td>
-              <td style={{ ...TD.style, color: '#ff6b6b', fontWeight: '700' }}>
+            <tr style={{ backgroundColor: '#ffcdd2', borderBottom: '2px solid #ef9a9a' }}>
+              <td style={{ padding: '3px 8px', fontWeight: '700', color: '#b71c1c', fontSize: '0.72rem', position: 'sticky', left: 0, backgroundColor: '#ffcdd2', zIndex: 1, borderRight: '2px solid #ccc' }}>Total salidas</td>
+              <td style={{ ...TD.style, color: '#b71c1c', fontWeight: '700' }}>
                 {PLANILLA_KEYS.reduce((s, k) => s + SECTION_ROWS.filter(r=>r.section==='salidas').reduce((ss,r)=>ss+((entry.salidas?.[r.type]?.[k])||0),0), 0)}
               </td>
               {PLANILLA_CATS.map(c => {
                 const tot = SECTION_ROWS.filter(r=>r.section==='salidas').reduce((s,r)=>s+((entry.salidas?.[r.type]?.[c.key])||0),0);
-                return <td key={c.key} style={{ ...TD.style, borderRight: colBorder(c.key), color: tot > 0 ? '#ff6b6b' : '#2a2a2a', fontWeight: tot > 0 ? '700' : '400' }}>{tot > 0 ? tot : '·'}</td>;
+                return <td key={c.key} style={{ ...TD.style, borderRight: colBorder(c.key), color: tot > 0 ? '#b71c1c' : '#ccc', fontWeight: tot > 0 ? '700' : '400' }}>{tot > 0 ? tot : '·'}</td>;
               })}
             </tr>
 
             {/* Cierre */}
-            <tr style={{ backgroundColor: '#0d1a0d', borderTop: '2px solid #333' }}>
-              <td style={{ padding: '5px 8px', fontWeight: '700', color: '#4caf50', fontSize: '0.78rem', position: 'sticky', left: 0, backgroundColor: '#0d1a0d', zIndex: 1, borderRight: '2px solid #222' }}>Cierre</td>
-              <td style={{ ...TD.style, color: '#4caf50', fontWeight: '700', fontSize: '0.78rem' }}>{totalStock(cierre)}</td>
+            <tr style={{ backgroundColor: '#e8f5e9', borderTop: '2px solid #ccc' }}>
+              <td style={{ padding: '5px 8px', fontWeight: '700', color: '#1b5e20', fontSize: '0.78rem', position: 'sticky', left: 0, backgroundColor: '#e8f5e9', zIndex: 1, borderRight: '2px solid #ccc' }}>Cierre</td>
+              <td style={{ ...TD.style, color: '#1b5e20', fontWeight: '700', fontSize: '0.78rem' }}>{totalStock(cierre)}</td>
               {PLANILLA_CATS.map(c => {
                 const val = cierre[c.key] || 0;
-                return <td key={c.key} style={{ ...TD.style, borderRight: colBorder(c.key), color: val > 0 ? '#4caf50' : val < 0 ? '#ff4444' : '#2a2a2a', fontWeight: val > 0 ? '700' : '400' }}>{val !== 0 ? val : '·'}</td>;
+                return <td key={c.key} style={{ ...TD.style, borderRight: colBorder(c.key), color: val > 0 ? '#1b5e20' : val < 0 ? '#c62828' : '#ccc', fontWeight: val > 0 ? '700' : '400' }}>{val !== 0 ? val : '·'}</td>;
               })}
             </tr>
 
             {/* EV row */}
-            <tr style={{ backgroundColor: '#0a0f1a', borderBottom: '1px solid #1a1a1a' }}>
-              <td style={{ padding: '3px 8px', color: '#4fc3f7', fontSize: '0.68rem', fontWeight: '600', position: 'sticky', left: 0, backgroundColor: '#0a0f1a', zIndex: 1, borderRight: '2px solid #222' }}>EV total / EV/ha</td>
-              <td style={{ ...TD.style, color: '#4fc3f7', fontWeight: '700' }}>{evCierre.toFixed(0)}</td>
-              <td colSpan={PLANILLA_CATS.length} style={{ ...TD.style, color: '#81d4fa', fontWeight: '700', textAlign: 'left' }}>
+            <tr style={{ backgroundColor: '#e3f2fd', borderBottom: '1px solid #ddd' }}>
+              <td style={{ padding: '3px 8px', color: '#0277bd', fontSize: '0.68rem', fontWeight: '600', position: 'sticky', left: 0, backgroundColor: '#e3f2fd', zIndex: 1, borderRight: '2px solid #ccc' }}>EV total / EV/ha</td>
+              <td style={{ ...TD.style, color: '#0277bd', fontWeight: '700' }}>{evCierre.toFixed(0)}</td>
+              <td colSpan={PLANILLA_CATS.length} style={{ ...TD.style, color: '#01579b', fontWeight: '700', textAlign: 'left' }}>
                 {evHa} EV/ha  ·  {HA_ESTABLECIMIENTO} ha efectivas
               </td>
             </tr>
