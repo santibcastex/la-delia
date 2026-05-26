@@ -1328,7 +1328,22 @@ function PlanillaPanel({ db }) {
     const updated = JSON.parse(JSON.stringify(entry));
     updated[section][type][key] = num;
     await setDoc(doc(db, 'planilla_mensual', currentYM), updated, { merge: true });
-    setPlanillaData(prev => ({ ...prev, [currentYM]: updated }));
+
+    // Cascade: recalculate apertura for all subsequent months
+    let newData = { ...planillaData, [currentYM]: updated };
+    const sortedMonths = Object.keys(newData).sort();
+    const idx = sortedMonths.indexOf(currentYM);
+    let prevEntry = updated;
+    for (let i = idx + 1; i < sortedMonths.length; i++) {
+      const nextYM = sortedMonths[i];
+      const prevCierre = calcCierre(prevEntry.apertura || {}, prevEntry.entradas || {}, prevEntry.salidas || {});
+      const nextEntry = { ...JSON.parse(JSON.stringify(newData[nextYM])), apertura: { ...prevCierre } };
+      await setDoc(doc(db, 'planilla_mensual', nextYM), nextEntry, { merge: true });
+      newData = { ...newData, [nextYM]: nextEntry };
+      prevEntry = nextEntry;
+    }
+
+    setPlanillaData(newData);
   };
 
   const startEdit = (section, type, key, currentVal) => {
