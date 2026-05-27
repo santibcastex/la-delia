@@ -2004,6 +2004,8 @@ function MapView({ onPotreroClick, modoMover, ndviActive, ndviDate, ndviIndex, s
 // ─── App ──────────────────────────────────────────────────────────────────────
 
 function App() {
+  const ALLOWED_EMAILS = ['santibaca@gmail.com', 'rauchsa@hotmail.com'];
+
   const [user, setUser] = useState(null);
   const [authReady, setAuthReady] = useState(false);
   const [authError, setAuthError] = useState(null);
@@ -2233,6 +2235,26 @@ function App() {
               {authError}
             </div>
           )}
+        </div>
+      </div>
+    );
+  }
+
+  if (!ALLOWED_EMAILS.includes(user.email?.toLowerCase())) {
+    return (
+      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', backgroundColor: '#0a0a0a', fontFamily: 'sans-serif', flexDirection: 'column' }}>
+        <div style={{ textAlign: 'center', backgroundColor: '#1a1a1a', padding: '3rem', borderRadius: '8px', border: '1px solid #333', maxWidth: '400px', color: '#fff' }}>
+          <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>🚫</div>
+          <h2 style={{ fontSize: '1.4rem', fontWeight: '400', margin: '0 0 0.75rem 0' }}>Acceso no autorizado</h2>
+          <p style={{ color: '#888', fontSize: '0.9rem', margin: '0 0 0.5rem 0' }}>
+            La cuenta <strong style={{ color: '#ccc' }}>{user.email}</strong> no tiene permiso para acceder.
+          </p>
+          <p style={{ color: '#666', fontSize: '0.82rem', margin: '0 0 2rem 0' }}>
+            Contactá al administrador para solicitar acceso.
+          </p>
+          <button onClick={handleSignOut} style={{ padding: '0.75rem 2rem', backgroundColor: '#333', color: '#aaa', border: '1px solid #444', borderRadius: '4px', fontSize: '0.9rem', cursor: 'pointer' }}>
+            Salir
+          </button>
         </div>
       </div>
     );
