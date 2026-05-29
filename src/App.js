@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
+import * as XLSX from 'xlsx';
 import { initializeApp } from 'firebase/app';
 import { getFirestore, collection, getDocs, addDoc, updateDoc, deleteDoc, doc, setDoc, query, where, orderBy } from 'firebase/firestore';
 import { getAuth, signOut, onAuthStateChanged, GoogleAuthProvider, signInWithRedirect, signInWithPopup, getRedirectResult } from 'firebase/auth';
@@ -389,6 +390,56 @@ function BalanceChart({ months, balanceKg }) {
             {ym.slice(5) + '/' + ym.slice(2, 4)}
           </text>
         ))}
+      </svg>
+    </div>
+  );
+}
+
+function EvDiasHaChart({ data }) {
+  if (!data || data.length === 0) return null;
+  const PAD_L = 55, PAD_R = 50, PAD_T = 18, PAD_B = 18;
+  const BAR_H = 17, GAP = 5;
+  const svgW = 680;
+  const innerW = svgW - PAD_L - PAD_R;
+  const svgH = PAD_T + data.length * (BAR_H + GAP) + PAD_B;
+  const maxVal = Math.max(...data.map(d => d.evDiasHa), 1);
+  const gridVals = [0.25, 0.5, 0.75, 1].map(p => parseFloat((p * maxVal).toFixed(1)));
+
+  function barColor(val) {
+    const t = Math.min(1, val / maxVal);
+    if (t < 0.5) { return `rgb(${180},${Math.round(t * 2 * 160)},0)`; }
+    return `rgb(${Math.round((1 - (t - 0.5) * 2) * 180)},160,0)`;
+  }
+
+  return (
+    <div style={{ overflowX: 'auto', marginBottom: '1rem' }}>
+      <svg width={svgW} height={svgH} style={{ display: 'block' }}>
+        {/* Grid verticals */}
+        {gridVals.map(v => {
+          const x = PAD_L + (v / maxVal) * innerW;
+          return (
+            <g key={v}>
+              <line x1={x} y1={PAD_T} x2={x} y2={svgH - PAD_B} stroke="#1e1e1e" strokeWidth="1" />
+              <text x={x} y={PAD_T - 4} textAnchor="middle" fontSize="8" fill="#444">{v}</text>
+            </g>
+          );
+        })}
+        {/* Baseline */}
+        <line x1={PAD_L} y1={PAD_T} x2={PAD_L} y2={svgH - PAD_B} stroke="#333" strokeWidth="1" />
+        {/* Bars */}
+        {data.map((d, i) => {
+          const y = PAD_T + i * (BAR_H + GAP);
+          const barW = Math.max(2, (d.evDiasHa / maxVal) * innerW);
+          return (
+            <g key={d.nombre}>
+              <text x={PAD_L - 6} y={y + BAR_H * 0.72} textAnchor="end" fontSize="10" fill="#ffeb3b" fontWeight="600">{d.nombre}</text>
+              <rect x={PAD_L} y={y} width={barW} height={BAR_H} fill={barColor(d.evDiasHa)} rx="2" />
+              <text x={PAD_L + barW + 5} y={y + BAR_H * 0.72} fontSize="9" fill="#aaa">{d.evDiasHa.toFixed(1)}</text>
+            </g>
+          );
+        })}
+        {/* Axis label */}
+        <text x={PAD_L + innerW / 2} y={svgH - 2} textAnchor="middle" fontSize="9" fill="#555">EV·días / ha</text>
       </svg>
     </div>
   );
@@ -1306,8 +1357,48 @@ function ForrajePanel({ hacienda, historial }) {
                   ))}
                 </div>
 
+                {/* Gráfico EV·días/ha por potrero */}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                  <h3 style={{ fontSize: '0.8rem', color: '#aaa', textTransform: 'uppercase', letterSpacing: '0.5px', margin: 0 }}>Productividad por potrero</h3>
+                  <button
+                    onClick={() => {
+                      const año = pastoreosYear ?? 'todos';
+                      const wb = XLSX.utils.book_new();
+                      const ws1 = XLSX.utils.aoa_to_sheet([
+                        ['Potrero', 'Ha', 'Pastoreos', 'Días total', 'EV·días', 'EV·días/ha', 'Carga prom (EV/ha)'],
+                        ...resumenPotreros.map(r => [r.nombre, r.ha, r.num, r.diasTotal, Math.round(r.evDias), parseFloat(r.evDiasHa.toFixed(1)), parseFloat(r.cargaEvHaProm.toFixed(2))]),
+                        [],
+                        ['Total pastoreos', totalPastoreos],
+                        ['Total días', totalDiasPastoreo],
+                        ['Total EV·días', Math.round(totalEvDias)],
+                      ]);
+                      const ws2 = XLSX.utils.aoa_to_sheet([
+                        ['Potrero', 'Fecha ingreso', 'Fecha salida', 'Días ocup.', 'Cabezas', 'EV total', 'Carga EV/ha', 'kg PV/ha', 'Categorías'],
+                        ...pastoreosFiltrados.map(ev => [
+                          ev.potrero,
+                          ev.fecha_ingreso ? new Date(ev.fecha_ingreso).toLocaleDateString('es-AR') : '',
+                          ev.fecha_salida ? new Date(ev.fecha_salida).toLocaleDateString('es-AR') : '',
+                          ev.dias_ocupacion ?? '',
+                          ev.total_cabezas ?? '',
+                          ev.total_ev != null ? parseFloat(ev.total_ev.toFixed(1)) : '',
+                          ev.carga_ev_ha != null ? parseFloat(ev.carga_ev_ha.toFixed(2)) : '',
+                          ev.carga_kg_ha != null ? parseFloat(ev.carga_kg_ha.toFixed(0)) : '',
+                          (ev.animales || []).map(a => a.rodeo ? `${a.nombre}·${a.rodeo} (${a.cantidad})` : `${a.nombre} (${a.cantidad})`).join(', '),
+                        ]),
+                      ]);
+                      XLSX.utils.book_append_sheet(wb, ws1, 'Resumen por potrero');
+                      XLSX.utils.book_append_sheet(wb, ws2, 'Detalle de pastoreos');
+                      XLSX.writeFile(wb, `pastoreos_${año}.xlsx`);
+                    }}
+                    style={{ padding: '0.35rem 0.85rem', fontSize: '0.78rem', fontWeight: '600', backgroundColor: '#0d2a0d', color: '#4caf50', border: '1px solid #2e7d32', borderRadius: '4px', cursor: 'pointer' }}
+                  >
+                    Exportar Excel
+                  </button>
+                </div>
+                <EvDiasHaChart data={resumenPotreros} />
+
                 {/* Tabla resumen por potrero (productividad) */}
-                <h3 style={{ fontSize: '0.8rem', color: '#aaa', textTransform: 'uppercase', letterSpacing: '0.5px', margin: '0 0 0.5rem 0' }}>Productividad por potrero</h3>
+                <h3 style={{ fontSize: '0.8rem', color: '#aaa', textTransform: 'uppercase', letterSpacing: '0.5px', margin: '1rem 0 0.5rem 0' }}>Detalle por potrero</h3>
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem', marginBottom: '1.5rem' }}>
                   <thead>
                     <tr style={{ backgroundColor: '#1a1a1a' }}>
