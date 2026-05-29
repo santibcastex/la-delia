@@ -81,6 +81,44 @@ const CATEGORIAS_ORDEN = ['Toritos', 'Toros', 'Vacas c/Cría', 'Vacas Cut', 'Vaq
 
 const PESO_PROMEDIO_DEFAULT = { 'Toritos': 150, 'Toros': 550, 'Vacas c/Cría': 480, 'Vacas Cut': 460, 'Vaquillonas 1-2 Años': 350, 'Vaquillonas +2 Años': 420, 'Novillitos': 280, 'Caballos': 500 };
 
+// Farm coordinates (center of Ea. La Delia, Solanet, Ayacucho)
+const FARM_LAT = -36.905;
+const FARM_LON = -58.583;
+
+function wmoDesc(code) {
+  if (code == null) return '—';
+  if (code === 0) return 'Despejado';
+  if (code === 1) return 'Mayormente despejado';
+  if (code === 2) return 'Parcialmente nublado';
+  if (code === 3) return 'Nublado';
+  if (code <= 49) return 'Niebla';
+  if (code <= 59) return 'Llovizna';
+  if (code <= 69) return 'Lluvia';
+  if (code <= 79) return 'Nieve';
+  if (code <= 84) return 'Chubascos';
+  if (code <= 90) return 'Nieve convectiva';
+  return 'Tormenta';
+}
+function wmoIcon(code) {
+  if (code == null) return '?';
+  if (code === 0) return '☀';
+  if (code === 1) return '🌤';
+  if (code === 2) return '⛅';
+  if (code === 3) return '☁';
+  if (code <= 49) return '🌫';
+  if (code <= 59) return '🌦';
+  if (code <= 69) return '🌧';
+  if (code <= 79) return '❄';
+  if (code <= 84) return '🌦';
+  if (code <= 90) return '❄';
+  return '⛈';
+}
+function windDir(deg) {
+  if (deg == null) return '—';
+  const dirs = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSO','SO','OSO','O','ONO','NO','NNO'];
+  return dirs[Math.round(deg / 22.5) % 16];
+}
+
 const EV_POR_CATEGORIA = { 'Toritos': 0.8, 'Toros': 1.2, 'Vacas c/Cría': 1.0, 'Vacas Cut': 1.0, 'Vaquillonas 1-2 Años': 0.8, 'Vaquillonas +2 Años': 0.9, 'Novillitos': 0.8, 'Caballos': 1.0 };
 
 const HACIENDA_INICIAL = [
@@ -391,6 +429,359 @@ function BalanceChart({ months, balanceKg }) {
           </text>
         ))}
       </svg>
+    </div>
+  );
+}
+
+function LluviaChart({ apiData, manualData, year }) {
+  const MESES = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+  const PAD_L = 52, PAD_R = 20, PAD_T = 22, PAD_B = 38;
+  const BAR_W = 30, GAP = 8;
+  const chartH = 160;
+  const svgW = PAD_L + 12 * (BAR_W + GAP) + PAD_R;
+  const svgH = PAD_T + chartH + PAD_B;
+
+  const months = MESES.map((label, m) => {
+    const ym = `${year}-${String(m + 1).padStart(2, '0')}`;
+    const api = apiData?.[ym] ?? null;
+    const manual = manualData.filter(r => r.fecha?.slice(0,7) === ym).reduce((s,r) => s + (r.mm || 0), 0);
+    return { label, ym, api, manual: manualData.some(r => r.fecha?.slice(0,7) === ym) ? manual : null };
+  });
+
+  const maxVal = Math.max(...months.map(m => Math.max(m.api ?? 0, m.manual ?? 0)), 50);
+  const totalApi = months.reduce((s,m) => s + (m.api ?? 0), 0);
+  const totalManual = months.reduce((s,m) => s + (m.manual ?? 0), 0);
+  const toY = v => PAD_T + chartH - (v / maxVal) * chartH;
+  const toX = i => PAD_L + i * (BAR_W + GAP);
+  const gridVals = [0, 0.25, 0.5, 0.75, 1].map(p => Math.round(p * maxVal));
+
+  return (
+    <div style={{ overflowX: 'auto', marginBottom: '0.75rem' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem', fontSize: '0.72rem', color: '#555' }}>
+        <span>
+          API: <strong style={{ color: '#1e88e5' }}>{Math.round(totalApi)} mm</strong>
+          {totalManual > 0 && <> · Registros propios: <strong style={{ color: '#43a047' }}>{Math.round(totalManual)} mm</strong></>}
+        </span>
+        <span>Open-Meteo ERA5 · Ayacucho</span>
+      </div>
+      <svg width={svgW} height={svgH} style={{ display: 'block' }}>
+        {gridVals.map(v => (
+          <g key={v}>
+            <line x1={PAD_L} y1={toY(v)} x2={svgW - PAD_R} y2={toY(v)} stroke="#1a1a1a" strokeWidth="1" />
+            <text x={PAD_L - 5} y={toY(v) + 4} textAnchor="end" fontSize="9" fill="#555">{v}</text>
+          </g>
+        ))}
+        <text x={12} y={PAD_T + chartH / 2} textAnchor="middle" fontSize="9" fill="#555" transform={`rotate(-90,12,${PAD_T + chartH / 2})`}>mm</text>
+        {months.map((m, i) => {
+          const bApi = m.api != null ? Math.max(2, (m.api / maxVal) * chartH) : 0;
+          const bMan = m.manual != null ? Math.max(2, (m.manual / maxVal) * chartH) : 0;
+          return (
+            <g key={m.ym}>
+              {m.api != null && (
+                <>
+                  <rect x={toX(i)} y={toY(m.api)} width={BAR_W} height={bApi} fill="#1565c0" rx="2" />
+                  {m.api >= 5 && <text x={toX(i) + BAR_W / 2} y={toY(m.api) - 3} textAnchor="middle" fontSize="8" fill="#64b5f6">{Math.round(m.api)}</text>}
+                </>
+              )}
+              {m.manual != null && (
+                <>
+                  <rect x={toX(i) + 2} y={toY(m.manual)} width={BAR_W - 4} height={bMan} fill="none" stroke="#43a047" strokeWidth="2" rx="2" />
+                </>
+              )}
+              {m.api == null && <rect x={toX(i)} y={PAD_T} width={BAR_W} height={chartH} fill="#0d0d0d" rx="2" />}
+              <text x={toX(i) + BAR_W / 2} y={PAD_T + chartH + 14} textAnchor="middle" fontSize="9" fill="#444">{m.label}</text>
+            </g>
+          );
+        })}
+        <rect x={PAD_L} y={4} width={10} height={8} fill="#1565c0" rx="1" />
+        <text x={PAD_L + 13} y={11} fontSize="8" fill="#888">ERA5</text>
+        <rect x={PAD_L + 46} y={4} width={10} height={8} fill="none" stroke="#43a047" strokeWidth="1.5" rx="1" />
+        <text x={PAD_L + 59} y={11} fontSize="8" fill="#43a047">Propio</text>
+      </svg>
+    </div>
+  );
+}
+
+function ClimaPanel() {
+  const [activeTab, setActiveTab] = useState('ahora');
+  const [climaData, setClimaData] = useState(null);
+  const [loadingClima, setLoadingClima] = useState(false);
+  const [lluviasApiRaw, setLluviasApiRaw] = useState(null);
+  const [loadingApi, setLoadingApi] = useState(false);
+  const [lluviasManual, setLluviasManual] = useState([]);
+  const [lluviasLoaded, setLluviasLoaded] = useState(false);
+  const [guardando, setGuardando] = useState(false);
+  const [eliminando, setEliminando] = useState(null);
+  const [nuevaFecha, setNuevaFecha] = useState(new Date().toISOString().slice(0, 10));
+  const [nuevaMm, setNuevaMm] = useState('');
+  const [nuevaObs, setNuevaObs] = useState('');
+  const [lluviasAnio, setLluviasAnio] = useState(new Date().getFullYear());
+
+  useEffect(() => {
+    setLoadingClima(true);
+    const url = `https://api.open-meteo.com/v1/forecast?latitude=${FARM_LAT}&longitude=${FARM_LON}` +
+      `&current=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,wind_speed_10m,wind_direction_10m,weather_code,surface_pressure,cloud_cover` +
+      `&daily=temperature_2m_max,temperature_2m_min,precipitation_sum,weather_code` +
+      `&timezone=America%2FArgentina%2FBuenos_Aires&wind_speed_unit=kmh&forecast_days=3`;
+    fetch(url).then(r => r.json()).then(setClimaData).catch(() => {}).finally(() => setLoadingClima(false));
+  }, []);
+
+  useEffect(() => {
+    if (activeTab !== 'lluvia' || lluviasApiRaw !== null || loadingApi) return;
+    setLoadingApi(true);
+    const start = '2020-01-01';
+    const end = new Date().toISOString().slice(0, 10);
+    const url = `https://archive-api.open-meteo.com/v1/archive?latitude=${FARM_LAT}&longitude=${FARM_LON}` +
+      `&start_date=${start}&end_date=${end}&daily=precipitation_sum&timezone=America%2FArgentina%2FBuenos_Aires`;
+    fetch(url)
+      .then(r => r.json())
+      .then(data => {
+        const raw = {};
+        (data.daily?.time || []).forEach((d, i) => { raw[d] = data.daily.precipitation_sum[i] ?? 0; });
+        setLluviasApiRaw(raw);
+      })
+      .catch(() => setLluviasApiRaw({}))
+      .finally(() => setLoadingApi(false));
+  }, [activeTab, lluviasApiRaw, loadingApi]);
+
+  useEffect(() => {
+    if (activeTab !== 'lluvia' || lluviasLoaded) return;
+    getDocs(query(collection(db, 'lluvias'), orderBy('fecha', 'desc')))
+      .then(snap => { setLluviasManual(snap.docs.map(d => ({ ...d.data(), docId: d.id }))); setLluviasLoaded(true); })
+      .catch(() => setLluviasLoaded(true));
+  }, [activeTab, lluviasLoaded]);
+
+  const apiMensual = {};
+  if (lluviasApiRaw) {
+    Object.entries(lluviasApiRaw).forEach(([d, mm]) => {
+      const ym = d.slice(0, 7);
+      apiMensual[ym] = (apiMensual[ym] || 0) + mm;
+    });
+  }
+  const aniosDisponibles = [...new Set([
+    ...Object.keys(apiMensual).map(ym => parseInt(ym.slice(0, 4))),
+    ...lluviasManual.map(r => parseInt((r.fecha || '').slice(0, 4))).filter(Boolean),
+  ])].filter(Boolean).sort((a, b) => b - a);
+
+  const agregarLluvia = async () => {
+    const mm = parseFloat(nuevaMm);
+    if (!nuevaFecha || isNaN(mm) || mm < 0) return;
+    setGuardando(true);
+    try {
+      const entry = { fecha: nuevaFecha, mm, obs: nuevaObs.trim() || null };
+      const ref = await addDoc(collection(db, 'lluvias'), entry);
+      setLluviasManual(prev => [{ ...entry, docId: ref.id }, ...prev].sort((a, b) => b.fecha.localeCompare(a.fecha)));
+      setNuevaMm('');
+      setNuevaObs('');
+    } catch (e) { console.error(e); }
+    setGuardando(false);
+  };
+
+  const eliminarLluvia = async (docId) => {
+    setEliminando(docId);
+    try {
+      await deleteDoc(doc(db, 'lluvias', docId));
+      setLluviasManual(prev => prev.filter(r => r.docId !== docId));
+    } catch (e) { console.error(e); }
+    setEliminando(null);
+  };
+
+  const exportarLluviasExcel = () => {
+    const wb = XLSX.utils.book_new();
+    const MESES = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+    aniosDisponibles.forEach(y => {
+      const rows = [['Mes', 'ERA5 (mm)', 'Registrado (mm)']];
+      MESES.forEach((label, m) => {
+        const ym = `${y}-${String(m + 1).padStart(2, '0')}`;
+        const api = parseFloat((apiMensual[ym] || 0).toFixed(1));
+        const manual = parseFloat(lluviasManual.filter(r => r.fecha?.slice(0,7) === ym).reduce((s,r) => s+(r.mm||0), 0).toFixed(1));
+        rows.push([`${label} ${y}`, api, manual || '']);
+      });
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rows), `Lluvia ${y}`);
+    });
+    const detalleRows = [['Fecha', 'mm', 'Observaciones'], ...lluviasManual.map(r => [r.fecha, r.mm, r.obs || ''])];
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(detalleRows), 'Registros propios');
+    XLSX.writeFile(wb, `lluvias_${lluviasAnio}.xlsx`);
+  };
+
+  const inputStyle = { padding: '0.35rem 0.6rem', backgroundColor: '#1a1a1a', border: '1px solid #2a2a2a', borderRadius: '4px', color: '#ddd', fontSize: '0.82rem' };
+
+  return (
+    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', backgroundColor: '#0d0d0d', overflow: 'hidden' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.75rem 1.5rem', backgroundColor: '#111', borderBottom: '1px solid #222', flexShrink: 0 }}>
+        <span style={{ fontSize: '0.85rem', fontWeight: '700', color: '#64b5f6', marginRight: '1rem', letterSpacing: '0.5px', textTransform: 'uppercase' }}>🌤 Clima</span>
+        {[{ id: 'ahora', label: 'Ahora' }, { id: 'lluvia', label: 'Lluvia' }].map(t => (
+          <button key={t.id} onClick={() => setActiveTab(t.id)} style={{
+            padding: '0.35rem 0.9rem', fontSize: '0.82rem', fontWeight: '600',
+            backgroundColor: activeTab === t.id ? '#0d1f3c' : 'transparent',
+            color: activeTab === t.id ? '#64b5f6' : '#666',
+            border: `1px solid ${activeTab === t.id ? '#1565c0' : '#2a2a2a'}`,
+            borderRadius: '4px', cursor: 'pointer'
+          }}>{t.label}</button>
+        ))}
+      </div>
+
+      <div style={{ flex: 1, overflow: 'auto', padding: '1.5rem' }}>
+
+        {/* ── AHORA ── */}
+        {activeTab === 'ahora' && (
+          <div style={{ maxWidth: '720px' }}>
+            {loadingClima && <div style={{ color: '#555', padding: '3rem', textAlign: 'center' }}>Obteniendo datos meteorológicos...</div>}
+            {!loadingClima && !climaData?.current && (
+              <div style={{ color: '#444', padding: '2rem', textAlign: 'center' }}>No se pudo obtener el clima. Verificá la conexión.</div>
+            )}
+            {!loadingClima && climaData?.current && (() => {
+              const c = climaData.current;
+              const d = climaData.daily;
+              return (
+                <>
+                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: '2rem', marginBottom: '1.75rem' }}>
+                    <div>
+                      <div style={{ fontSize: '5rem', fontWeight: '200', lineHeight: 1, color: '#fff', letterSpacing: '-3px' }}>
+                        {Math.round(c.temperature_2m)}<span style={{ fontSize: '2.5rem', color: '#aaa' }}>°C</span>
+                      </div>
+                      <div style={{ fontSize: '0.88rem', color: '#888', marginTop: '0.3rem' }}>
+                        Sensación {Math.round(c.apparent_temperature)}°C · {wmoDesc(c.weather_code)}
+                      </div>
+                      {d?.time?.[0] && (
+                        <div style={{ fontSize: '0.78rem', color: '#555', marginTop: '0.2rem' }}>
+                          Hoy: {Math.round(d.temperature_2m_min[0])}° mín · {Math.round(d.temperature_2m_max[0])}° máx
+                        </div>
+                      )}
+                    </div>
+                    <div style={{ fontSize: '4rem', opacity: 0.55, lineHeight: 1, paddingTop: '0.5rem' }}>{wmoIcon(c.weather_code)}</div>
+                  </div>
+
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '0.65rem', marginBottom: '1.75rem' }}>
+                    {[
+                      { label: 'Humedad', val: `${c.relative_humidity_2m}%`, color: '#64b5f6' },
+                      { label: 'Viento', val: `${Math.round(c.wind_speed_10m)} km/h ${windDir(c.wind_direction_10m)}`, color: '#ccc' },
+                      { label: 'Presión', val: `${Math.round(c.surface_pressure)} hPa`, color: '#ccc' },
+                      { label: 'Nubosidad', val: `${c.cloud_cover}%`, color: '#ccc' },
+                      { label: 'Precip. hoy', val: `${(d?.precipitation_sum?.[0] ?? 0).toFixed(1)} mm`, color: '#64b5f6' },
+                    ].map(s => (
+                      <div key={s.label} style={{ backgroundColor: '#131313', border: '1px solid #1e1e1e', borderRadius: '6px', padding: '0.75rem 0.9rem' }}>
+                        <div style={{ fontSize: '0.65rem', color: '#555', textTransform: 'uppercase', letterSpacing: '0.4px', marginBottom: '0.3rem' }}>{s.label}</div>
+                        <div style={{ fontSize: '1.1rem', fontWeight: '600', color: s.color }}>{s.val}</div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {d?.time && (
+                    <>
+                      <h3 style={{ fontSize: '0.75rem', color: '#444', textTransform: 'uppercase', letterSpacing: '0.5px', margin: '0 0 0.65rem 0' }}>Próximos días</h3>
+                      <div style={{ display: 'flex', gap: '0.75rem', marginBottom: '1.5rem' }}>
+                        {[1, 2].map(i => (
+                          <div key={i} style={{ flex: 1, backgroundColor: '#131313', border: '1px solid #1e1e1e', borderRadius: '6px', padding: '1rem', textAlign: 'center' }}>
+                            <div style={{ fontSize: '0.72rem', color: '#555', marginBottom: '0.4rem', textTransform: 'capitalize' }}>
+                              {new Date(d.time[i] + 'T12:00:00').toLocaleDateString('es-AR', { weekday: 'long', day: 'numeric', month: 'short' })}
+                            </div>
+                            <div style={{ fontSize: '2rem', opacity: 0.6, marginBottom: '0.3rem' }}>{wmoIcon(d.weather_code[i])}</div>
+                            <div style={{ fontSize: '1rem', fontWeight: '600', color: '#ddd' }}>
+                              {Math.round(d.temperature_2m_min[i])}° / {Math.round(d.temperature_2m_max[i])}°
+                            </div>
+                            <div style={{ fontSize: '0.78rem', color: '#64b5f6', marginTop: '0.2rem', fontWeight: '600' }}>
+                              {(d.precipitation_sum[i] || 0).toFixed(1)} mm
+                            </div>
+                            <div style={{ fontSize: '0.7rem', color: '#444', marginTop: '0.15rem' }}>{wmoDesc(d.weather_code[i])}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  )}
+
+                  <div style={{ fontSize: '0.68rem', color: '#252525' }}>
+                    Open-Meteo ERA5 · Solanet, Ayacucho ({FARM_LAT}, {FARM_LON})
+                    {c.time && ` · Actualizado ${new Date(c.time).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}`}
+                  </div>
+                </>
+              );
+            })()}
+          </div>
+        )}
+
+        {/* ── LLUVIA ── */}
+        {activeTab === 'lluvia' && (
+          <div style={{ maxWidth: '860px' }}>
+            {/* Year filter + export */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '1rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap' }}>
+                <span style={{ fontSize: '0.72rem', color: '#555', textTransform: 'uppercase', letterSpacing: '0.4px', marginRight: '0.25rem' }}>Año</span>
+                {(loadingApi || !lluviasApiRaw) && <span style={{ fontSize: '0.75rem', color: '#444' }}>Cargando datos...</span>}
+                {aniosDisponibles.map(y => (
+                  <button key={y} onClick={() => setLluviasAnio(y)} style={{
+                    padding: '0.28rem 0.75rem', fontSize: '0.8rem', fontWeight: '600',
+                    backgroundColor: lluviasAnio === y ? '#0d1f3c' : 'transparent',
+                    color: lluviasAnio === y ? '#64b5f6' : '#555',
+                    border: `1px solid ${lluviasAnio === y ? '#1565c0' : '#2a2a2a'}`,
+                    borderRadius: '4px', cursor: 'pointer'
+                  }}>{y}</button>
+                ))}
+              </div>
+              {lluviasApiRaw && (
+                <button onClick={exportarLluviasExcel} style={{ padding: '0.35rem 0.85rem', fontSize: '0.78rem', fontWeight: '600', backgroundColor: '#0d1f3c', color: '#64b5f6', border: '1px solid #1565c0', borderRadius: '4px', cursor: 'pointer' }}>
+                  Exportar Excel
+                </button>
+              )}
+            </div>
+
+            {/* Monthly chart */}
+            {lluviasApiRaw && (
+              <LluviaChart apiData={apiMensual} manualData={lluviasManual} year={lluviasAnio} />
+            )}
+
+            {/* Manual records */}
+            <div style={{ borderTop: '1px solid #1e1e1e', paddingTop: '1rem', marginTop: '0.5rem' }}>
+              <h3 style={{ fontSize: '0.78rem', color: '#aaa', textTransform: 'uppercase', letterSpacing: '0.5px', margin: '0 0 0.75rem 0' }}>Registrar lluvia</h3>
+              <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'flex-end', flexWrap: 'wrap', marginBottom: '1rem' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+                  <span style={{ fontSize: '0.65rem', color: '#555', textTransform: 'uppercase' }}>Fecha</span>
+                  <input type="date" value={nuevaFecha} onChange={e => setNuevaFecha(e.target.value)} style={inputStyle} />
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+                  <span style={{ fontSize: '0.65rem', color: '#555', textTransform: 'uppercase' }}>mm</span>
+                  <input type="number" min="0" step="0.5" value={nuevaMm} onChange={e => setNuevaMm(e.target.value)} placeholder="ej: 24.5" style={{ ...inputStyle, width: '90px' }} />
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem', flex: 1, minWidth: '160px' }}>
+                  <span style={{ fontSize: '0.65rem', color: '#555', textTransform: 'uppercase' }}>Observación (opcional)</span>
+                  <input type="text" value={nuevaObs} onChange={e => setNuevaObs(e.target.value)} placeholder="ej: tormenta por la tarde" style={{ ...inputStyle, width: '100%' }} />
+                </div>
+                <button onClick={agregarLluvia} disabled={guardando || !nuevaMm} style={{ padding: '0.38rem 1rem', backgroundColor: nuevaMm ? '#0d1f3c' : '#111', color: nuevaMm ? '#64b5f6' : '#333', border: `1px solid ${nuevaMm ? '#1565c0' : '#222'}`, borderRadius: '4px', cursor: nuevaMm ? 'pointer' : 'default', fontSize: '0.82rem', fontWeight: '600', whiteSpace: 'nowrap' }}>
+                  {guardando ? 'Guardando...' : '+ Agregar'}
+                </button>
+              </div>
+
+              {/* Records table */}
+              {lluviasManual.length > 0 && (
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem' }}>
+                  <thead>
+                    <tr style={{ backgroundColor: '#1a1a1a' }}>
+                      {['Fecha', 'mm', 'Observación', ''].map(h => (
+                        <th key={h} style={{ padding: '0.45rem 0.65rem', textAlign: h === 'mm' ? 'right' : 'left', color: '#666', fontWeight: '600', textTransform: 'uppercase', fontSize: '0.67rem', letterSpacing: '0.4px', borderBottom: '1px solid #2a2a2a' }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {lluviasManual.filter(r => r.fecha?.startsWith(lluviasAnio)).map((r, i) => (
+                      <tr key={r.docId} style={{ backgroundColor: i % 2 === 0 ? '#111' : '#131313', borderBottom: '1px solid #1e1e1e' }}>
+                        <td style={{ padding: '0.4rem 0.65rem', color: '#ccc' }}>{new Date(r.fecha + 'T12:00:00').toLocaleDateString('es-AR', { day: '2-digit', month: 'short', year: 'numeric' })}</td>
+                        <td style={{ padding: '0.4rem 0.65rem', color: '#64b5f6', fontWeight: '700', textAlign: 'right' }}>{r.mm.toFixed(1)} mm</td>
+                        <td style={{ padding: '0.4rem 0.65rem', color: '#555', fontSize: '0.78rem' }}>{r.obs || '—'}</td>
+                        <td style={{ padding: '0.4rem 0.5rem', textAlign: 'right' }}>
+                          <button onClick={() => eliminarLluvia(r.docId)} disabled={eliminando === r.docId} style={{ background: 'none', border: 'none', color: '#333', cursor: 'pointer', fontSize: '0.85rem', padding: '0.1rem 0.3rem' }} title="Eliminar">✕</button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+              {lluviasLoaded && lluviasManual.filter(r => r.fecha?.startsWith(lluviasAnio)).length === 0 && (
+                <div style={{ fontSize: '0.78rem', color: '#333', padding: '0.75rem 0' }}>Sin registros propios para {lluviasAnio}.</div>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -2594,6 +2985,7 @@ function App() {
     { id: 'mapa',     icon: '🗺',  label: 'Mapa'     },
     { id: 'forraje',  icon: '🌿',  label: 'Forraje'  },
     { id: 'planilla', icon: '📋',  label: 'Planilla' },
+    { id: 'clima',    icon: '🌤',  label: 'Clima'    },
   ];
 
   return (
@@ -2983,6 +3375,11 @@ function App() {
           {/* ── PLANILLA section ── */}
           {activeSection === 'planilla' && (
             <PlanillaPanel db={db} />
+          )}
+
+          {/* ── CLIMA section ── */}
+          {activeSection === 'clima' && (
+            <ClimaPanel />
           )}
 
         </div>
