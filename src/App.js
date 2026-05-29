@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
+import * as XLSX from 'xlsx';
 import { initializeApp } from 'firebase/app';
 import { getFirestore, collection, getDocs, addDoc, updateDoc, deleteDoc, doc, setDoc, query, where, orderBy } from 'firebase/firestore';
 import { getAuth, signOut, onAuthStateChanged, GoogleAuthProvider, signInWithRedirect, signInWithPopup, getRedirectResult } from 'firebase/auth';
@@ -394,6 +395,56 @@ function BalanceChart({ months, balanceKg }) {
   );
 }
 
+function EvDiasHaChart({ data }) {
+  if (!data || data.length === 0) return null;
+  const PAD_L = 55, PAD_R = 50, PAD_T = 18, PAD_B = 18;
+  const BAR_H = 17, GAP = 5;
+  const svgW = 680;
+  const innerW = svgW - PAD_L - PAD_R;
+  const svgH = PAD_T + data.length * (BAR_H + GAP) + PAD_B;
+  const maxVal = Math.max(...data.map(d => d.evDiasHa), 1);
+  const gridVals = [0.25, 0.5, 0.75, 1].map(p => parseFloat((p * maxVal).toFixed(1)));
+
+  function barColor(val) {
+    const t = Math.min(1, val / maxVal);
+    if (t < 0.5) { return `rgb(${180},${Math.round(t * 2 * 160)},0)`; }
+    return `rgb(${Math.round((1 - (t - 0.5) * 2) * 180)},160,0)`;
+  }
+
+  return (
+    <div style={{ overflowX: 'auto', marginBottom: '1rem' }}>
+      <svg width={svgW} height={svgH} style={{ display: 'block' }}>
+        {/* Grid verticals */}
+        {gridVals.map(v => {
+          const x = PAD_L + (v / maxVal) * innerW;
+          return (
+            <g key={v}>
+              <line x1={x} y1={PAD_T} x2={x} y2={svgH - PAD_B} stroke="#1e1e1e" strokeWidth="1" />
+              <text x={x} y={PAD_T - 4} textAnchor="middle" fontSize="8" fill="#444">{v}</text>
+            </g>
+          );
+        })}
+        {/* Baseline */}
+        <line x1={PAD_L} y1={PAD_T} x2={PAD_L} y2={svgH - PAD_B} stroke="#333" strokeWidth="1" />
+        {/* Bars */}
+        {data.map((d, i) => {
+          const y = PAD_T + i * (BAR_H + GAP);
+          const barW = Math.max(2, (d.evDiasHa / maxVal) * innerW);
+          return (
+            <g key={d.nombre}>
+              <text x={PAD_L - 6} y={y + BAR_H * 0.72} textAnchor="end" fontSize="10" fill="#ffeb3b" fontWeight="600">{d.nombre}</text>
+              <rect x={PAD_L} y={y} width={barW} height={BAR_H} fill={barColor(d.evDiasHa)} rx="2" />
+              <text x={PAD_L + barW + 5} y={y + BAR_H * 0.72} fontSize="9" fill="#aaa">{d.evDiasHa.toFixed(1)}</text>
+            </g>
+          );
+        })}
+        {/* Axis label */}
+        <text x={PAD_L + innerW / 2} y={svgH - 2} textAnchor="middle" fontSize="9" fill="#555">EV·días / ha</text>
+      </svg>
+    </div>
+  );
+}
+
 function ForrajePanel({ hacienda, historial }) {
   const [activeTab, setActiveTab] = useState('actual');
   const [radiation, setRadiation] = useState({});
@@ -411,6 +462,9 @@ function ForrajePanel({ hacienda, historial }) {
   const [simMode, setSimMode] = useState('dias');
   const [simTargetDias, setSimTargetDias] = useState(30);
   const [simTargetCat, setSimTargetCat] = useState('Vacas c/Cría');
+  const [pastoreosAll, setPastoreosAll] = useState(null); // null = not loaded
+  const [loadingPastoreos, setLoadingPastoreos] = useState(false);
+  const [pastoreosYear, setPastoreosYear] = useState(null); // null = todos los años
 
   // Fetch radiation on mount
   useEffect(() => {
@@ -467,6 +521,18 @@ function ForrajePanel({ hacienda, historial }) {
         .finally(() => setLoadingHistory(false));
     }
   }, [activeTab, ndviHistory, loadingHistory]);
+
+  // Cargar toda la colección de pastoreos al entrar a la pestaña
+  useEffect(() => {
+    if (activeTab === 'pastoreos' && pastoreosAll === null && !loadingPastoreos) {
+      setLoadingPastoreos(true);
+      const q = query(collection(db, 'pastoreos'), orderBy('fecha_salida', 'desc'));
+      getDocs(q)
+        .then(snap => setPastoreosAll(snap.docs.map(d => ({ ...d.data(), docId: d.id }))))
+        .catch(err => { console.error('Error cargando pastoreos:', err); setPastoreosAll([]); })
+        .finally(() => setLoadingPastoreos(false));
+    }
+  }, [activeTab, pastoreosAll, loadingPastoreos]);
 
   const currentYM = new Date().toISOString().slice(0, 7);
   const currentMonth = new Date().getMonth();
@@ -563,7 +629,37 @@ function ForrajePanel({ hacienda, historial }) {
     { id: 'curva', label: 'Curva Forrajera' },
     { id: 'potrero', label: 'Por Potrero' },
     { id: 'descanso', label: 'Período Descanso' },
+    { id: 'pastoreos', label: 'Pastoreos' },
   ];
+
+  // Pastoreos: filtro por año + agregación por potrero (productividad)
+  const pastoreosAnios = pastoreosAll
+    ? [...new Set(pastoreosAll.map(p => p.año).filter(Boolean))].sort((a, b) => b - a)
+    : [];
+  const pastoreosFiltrados = (pastoreosAll || []).filter(p => pastoreosYear == null || p.año === pastoreosYear);
+  // Resumen por potrero: integra carga × tiempo en EV·días y EV·días/ha
+  const resumenPotreros = (() => {
+    const acc = {};
+    pastoreosFiltrados.forEach(ev => {
+      const n = ev.potrero;
+      if (!acc[n]) acc[n] = { nombre: n, ha: ev.ha || 0, num: 0, diasTotal: 0, evDias: 0, kgDiasHa: 0, cabezasMax: 0 };
+      const dias = ev.dias_ocupacion || 0;
+      acc[n].num += 1;
+      acc[n].diasTotal += dias;
+      acc[n].evDias += (ev.total_ev || 0) * dias;
+      acc[n].kgDiasHa += (ev.carga_kg_ha || 0) * dias;
+      acc[n].cabezasMax = Math.max(acc[n].cabezasMax, ev.total_cabezas || 0);
+      if (ev.ha) acc[n].ha = ev.ha;
+    });
+    return Object.values(acc).map(r => ({
+      ...r,
+      evDiasHa: r.ha > 0 ? r.evDias / r.ha : 0,
+      cargaEvHaProm: r.diasTotal > 0 && r.ha > 0 ? r.evDias / r.ha / r.diasTotal : 0,
+    })).sort((a, b) => b.evDiasHa - a.evDiasHa);
+  })();
+  const totalEvDias = resumenPotreros.reduce((s, r) => s + r.evDias, 0);
+  const totalDiasPastoreo = resumenPotreros.reduce((s, r) => s + r.diasTotal, 0);
+  const totalPastoreos = pastoreosFiltrados.length;
 
   // Por Potrero: heatmap with year filter
   const byPotrero = msData?.byPotrero ?? {};
@@ -1206,6 +1302,163 @@ function ForrajePanel({ hacienda, historial }) {
             <div style={{ marginTop: '0.75rem', fontSize: '0.72rem', color: '#444' }}>
               MS acumulada desde última salida de hacienda · eficiencia {efficiency}%
             </div>
+          </div>
+        )}
+
+        {/* ── PASTOREOS ── */}
+        {activeTab === 'pastoreos' && (
+          <div>
+            {/* Filtro de año */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem', flexWrap: 'wrap' }}>
+              <span style={{ fontSize: '0.75rem', color: '#666', textTransform: 'uppercase', letterSpacing: '0.4px', marginRight: '0.25rem' }}>Año</span>
+              <button onClick={() => setPastoreosYear(null)} style={{
+                padding: '0.3rem 0.8rem', fontSize: '0.8rem', fontWeight: '600',
+                backgroundColor: pastoreosYear == null ? '#1a3a1a' : 'transparent',
+                color: pastoreosYear == null ? '#4caf50' : '#666',
+                border: `1px solid ${pastoreosYear == null ? '#4caf50' : '#2a2a2a'}`,
+                borderRadius: '4px', cursor: 'pointer'
+              }}>Todos</button>
+              {pastoreosAnios.map(y => (
+                <button key={y} onClick={() => setPastoreosYear(y)} style={{
+                  padding: '0.3rem 0.8rem', fontSize: '0.8rem', fontWeight: '600',
+                  backgroundColor: pastoreosYear === y ? '#1a3a1a' : 'transparent',
+                  color: pastoreosYear === y ? '#4caf50' : '#666',
+                  border: `1px solid ${pastoreosYear === y ? '#4caf50' : '#2a2a2a'}`,
+                  borderRadius: '4px', cursor: 'pointer'
+                }}>{y}</button>
+              ))}
+            </div>
+
+            {loadingPastoreos && (
+              <div style={{ padding: '2rem', textAlign: 'center', color: '#555', fontSize: '0.85rem' }}>
+                Cargando registros de pastoreo...
+              </div>
+            )}
+
+            {!loadingPastoreos && totalPastoreos === 0 && (
+              <div style={{ padding: '1.5rem', textAlign: 'center', color: '#444', fontSize: '0.85rem' }}>
+                Todavía no hay registros de pastoreo{pastoreosYear ? ` para ${pastoreosYear}` : ''}. Se generan automáticamente cada vez que sale la hacienda de un potrero.
+              </div>
+            )}
+
+            {!loadingPastoreos && totalPastoreos > 0 && (
+              <>
+                {/* Tarjetas resumen */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '0.75rem', marginBottom: '1.25rem' }}>
+                  {[
+                    { label: 'Pastoreos registrados', val: totalPastoreos.toLocaleString(), color: '#ffeb3b' },
+                    { label: 'Días de pastoreo (suma)', val: totalDiasPastoreo.toLocaleString(), color: '#64b5f6' },
+                    { label: 'EV·días soportados', val: Math.round(totalEvDias).toLocaleString(), color: '#4caf50' },
+                  ].map(c => (
+                    <div key={c.label} style={{ backgroundColor: '#131313', border: '1px solid #222', borderRadius: '6px', padding: '0.8rem 1rem' }}>
+                      <div style={{ fontSize: '0.68rem', color: '#777', textTransform: 'uppercase', letterSpacing: '0.4px', marginBottom: '0.3rem' }}>{c.label}</div>
+                      <div style={{ fontSize: '1.5rem', fontWeight: '700', color: c.color }}>{c.val}</div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Gráfico EV·días/ha por potrero */}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                  <h3 style={{ fontSize: '0.8rem', color: '#aaa', textTransform: 'uppercase', letterSpacing: '0.5px', margin: 0 }}>Productividad por potrero</h3>
+                  <button
+                    onClick={() => {
+                      const año = pastoreosYear ?? 'todos';
+                      const wb = XLSX.utils.book_new();
+                      const ws1 = XLSX.utils.aoa_to_sheet([
+                        ['Potrero', 'Ha', 'Pastoreos', 'Días total', 'EV·días', 'EV·días/ha', 'Carga prom (EV/ha)'],
+                        ...resumenPotreros.map(r => [r.nombre, r.ha, r.num, r.diasTotal, Math.round(r.evDias), parseFloat(r.evDiasHa.toFixed(1)), parseFloat(r.cargaEvHaProm.toFixed(2))]),
+                        [],
+                        ['Total pastoreos', totalPastoreos],
+                        ['Total días', totalDiasPastoreo],
+                        ['Total EV·días', Math.round(totalEvDias)],
+                      ]);
+                      const ws2 = XLSX.utils.aoa_to_sheet([
+                        ['Potrero', 'Fecha ingreso', 'Fecha salida', 'Días ocup.', 'Cabezas', 'EV total', 'Carga EV/ha', 'kg PV/ha', 'Categorías'],
+                        ...pastoreosFiltrados.map(ev => [
+                          ev.potrero,
+                          ev.fecha_ingreso ? new Date(ev.fecha_ingreso).toLocaleDateString('es-AR') : '',
+                          ev.fecha_salida ? new Date(ev.fecha_salida).toLocaleDateString('es-AR') : '',
+                          ev.dias_ocupacion ?? '',
+                          ev.total_cabezas ?? '',
+                          ev.total_ev != null ? parseFloat(ev.total_ev.toFixed(1)) : '',
+                          ev.carga_ev_ha != null ? parseFloat(ev.carga_ev_ha.toFixed(2)) : '',
+                          ev.carga_kg_ha != null ? parseFloat(ev.carga_kg_ha.toFixed(0)) : '',
+                          (ev.animales || []).map(a => a.rodeo ? `${a.nombre}·${a.rodeo} (${a.cantidad})` : `${a.nombre} (${a.cantidad})`).join(', '),
+                        ]),
+                      ]);
+                      XLSX.utils.book_append_sheet(wb, ws1, 'Resumen por potrero');
+                      XLSX.utils.book_append_sheet(wb, ws2, 'Detalle de pastoreos');
+                      XLSX.writeFile(wb, `pastoreos_${año}.xlsx`);
+                    }}
+                    style={{ padding: '0.35rem 0.85rem', fontSize: '0.78rem', fontWeight: '600', backgroundColor: '#0d2a0d', color: '#4caf50', border: '1px solid #2e7d32', borderRadius: '4px', cursor: 'pointer' }}
+                  >
+                    Exportar Excel
+                  </button>
+                </div>
+                <EvDiasHaChart data={resumenPotreros} />
+
+                {/* Tabla resumen por potrero (productividad) */}
+                <h3 style={{ fontSize: '0.8rem', color: '#aaa', textTransform: 'uppercase', letterSpacing: '0.5px', margin: '1rem 0 0.5rem 0' }}>Detalle por potrero</h3>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem', marginBottom: '1.5rem' }}>
+                  <thead>
+                    <tr style={{ backgroundColor: '#1a1a1a' }}>
+                      {['Potrero', 'Ha', 'Pastoreos', 'Días total', 'EV·días', 'EV·días/ha', 'Carga prom (EV/ha)'].map(h => (
+                        <th key={h} style={{ padding: '0.5rem 0.75rem', textAlign: h === 'Potrero' ? 'left' : 'right', color: '#777', fontWeight: '600', textTransform: 'uppercase', fontSize: '0.68rem', letterSpacing: '0.4px', borderBottom: '1px solid #2a2a2a', whiteSpace: 'nowrap' }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {resumenPotreros.map((r, i) => (
+                      <tr key={r.nombre} style={{ backgroundColor: i % 2 === 0 ? '#111' : '#131313', borderBottom: '1px solid #1e1e1e' }}>
+                        <td style={{ padding: '0.45rem 0.75rem', fontWeight: '700', color: '#ffeb3b' }}>{r.nombre}</td>
+                        <td style={{ padding: '0.45rem 0.75rem', color: '#888', textAlign: 'right' }}>{r.ha.toFixed(1)}</td>
+                        <td style={{ padding: '0.45rem 0.75rem', color: '#ccc', textAlign: 'right' }}>{r.num}</td>
+                        <td style={{ padding: '0.45rem 0.75rem', color: '#64b5f6', textAlign: 'right' }}>{r.diasTotal}d</td>
+                        <td style={{ padding: '0.45rem 0.75rem', color: '#ccc', textAlign: 'right' }}>{Math.round(r.evDias).toLocaleString()}</td>
+                        <td style={{ padding: '0.45rem 0.75rem', color: '#4caf50', fontWeight: '700', textAlign: 'right' }}>{r.evDiasHa.toFixed(1)}</td>
+                        <td style={{ padding: '0.45rem 0.75rem', color: '#888', textAlign: 'right' }}>{r.cargaEvHaProm.toFixed(2)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+
+                {/* Detalle de eventos */}
+                <h3 style={{ fontSize: '0.8rem', color: '#aaa', textTransform: 'uppercase', letterSpacing: '0.5px', margin: '0 0 0.5rem 0' }}>Detalle de pastoreos</h3>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
+                  <thead>
+                    <tr style={{ backgroundColor: '#1a1a1a' }}>
+                      {['Potrero', 'Ingreso', 'Salida', 'Días', 'Cabezas', 'EV total', 'EV/ha', 'kg PV/ha', 'Categorías'].map(h => (
+                        <th key={h} style={{ padding: '0.5rem 0.6rem', textAlign: h === 'Potrero' || h === 'Categorías' ? 'left' : 'right', color: '#777', fontWeight: '600', textTransform: 'uppercase', fontSize: '0.66rem', letterSpacing: '0.4px', borderBottom: '1px solid #2a2a2a', whiteSpace: 'nowrap' }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {pastoreosFiltrados.map((ev, i) => {
+                      const fmt = d => d ? new Date(d).toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: '2-digit' }) : '—';
+                      return (
+                        <tr key={ev.docId || i} style={{ backgroundColor: i % 2 === 0 ? '#111' : '#131313', borderBottom: '1px solid #1e1e1e' }}>
+                          <td style={{ padding: '0.4rem 0.6rem', fontWeight: '700', color: '#ffeb3b' }}>{ev.potrero}</td>
+                          <td style={{ padding: '0.4rem 0.6rem', color: '#888', textAlign: 'right' }}>{fmt(ev.fecha_ingreso)}</td>
+                          <td style={{ padding: '0.4rem 0.6rem', color: '#ccc', textAlign: 'right' }}>{fmt(ev.fecha_salida)}</td>
+                          <td style={{ padding: '0.4rem 0.6rem', color: '#64b5f6', fontWeight: '700', textAlign: 'right' }}>{ev.dias_ocupacion != null ? `${ev.dias_ocupacion}d` : '—'}</td>
+                          <td style={{ padding: '0.4rem 0.6rem', color: '#ccc', textAlign: 'right' }}>{ev.total_cabezas?.toLocaleString() ?? '—'}</td>
+                          <td style={{ padding: '0.4rem 0.6rem', color: '#ccc', textAlign: 'right' }}>{ev.total_ev != null ? ev.total_ev.toFixed(0) : '—'}</td>
+                          <td style={{ padding: '0.4rem 0.6rem', color: '#4caf50', fontWeight: '700', textAlign: 'right' }}>{ev.carga_ev_ha != null ? ev.carga_ev_ha.toFixed(2) : '—'}</td>
+                          <td style={{ padding: '0.4rem 0.6rem', color: '#888', textAlign: 'right' }}>{ev.carga_kg_ha != null ? ev.carga_kg_ha.toFixed(0) : '—'}</td>
+                          <td style={{ padding: '0.4rem 0.6rem', color: '#666', fontSize: '0.72rem' }}>
+                            {(ev.animales || []).map(a => a.rodeo ? `${a.nombre}·${a.rodeo} (${a.cantidad})` : `${a.nombre} (${a.cantidad})`).join(', ')}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+
+                <div style={{ marginTop: '0.75rem', fontSize: '0.72rem', color: '#444' }}>
+                  EV·días/ha = carga (EV/ha) integrada en el tiempo de ocupación · indicador de productividad anual del potrero
+                </div>
+              </>
+            )}
           </div>
         )}
       </div>
