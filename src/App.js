@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { initializeApp } from 'firebase/app';
-import { getFirestore, collection, getDocs, addDoc, updateDoc, deleteDoc, doc, setDoc } from 'firebase/firestore';
+import { getFirestore, collection, getDocs, addDoc, updateDoc, deleteDoc, doc, setDoc, query, where, orderBy } from 'firebase/firestore';
 import { getAuth, signOut, onAuthStateChanged, GoogleAuthProvider, signInWithRedirect, signInWithPopup, getRedirectResult } from 'firebase/auth';
 import './App.css';
 
@@ -79,6 +79,8 @@ const POSTREROS_GEOJSON = {
 const CATEGORIAS_ORDEN = ['Toritos', 'Toros', 'Vacas c/Cría', 'Vacas Cut', 'Vaquillonas 1-2 Años', 'Vaquillonas +2 Años', 'Novillitos', 'Caballos'];
 
 const PESO_PROMEDIO_DEFAULT = { 'Toritos': 150, 'Toros': 550, 'Vacas c/Cría': 480, 'Vacas Cut': 460, 'Vaquillonas 1-2 Años': 350, 'Vaquillonas +2 Años': 420, 'Novillitos': 280, 'Caballos': 500 };
+
+const EV_POR_CATEGORIA = { 'Toritos': 0.8, 'Toros': 1.2, 'Vacas c/Cría': 1.0, 'Vacas Cut': 1.0, 'Vaquillonas 1-2 Años': 0.8, 'Vaquillonas +2 Años': 0.9, 'Novillitos': 0.8, 'Caballos': 1.0 };
 
 const HACIENDA_INICIAL = [
   { id: 1, nombre: 'Toritos',            rodeo: null, cantidad: 5,   peso_promedio: 150, potrero: null },
@@ -2012,6 +2014,9 @@ function App() {
   const [hacienda, setHacienda] = useState(HACIENDA_INICIAL);
   const [historial, setHistorial] = useState({});
   const [selectedPotrero, setSelectedPotrero] = useState(null);
+  const [pastoreosCache, setPastoreosCache] = useState({});
+  const [pastoreosLoading, setPastoreosLoading] = useState(false);
+  const [historialPastoreosExpanded, setHistorialPastoreosExpanded] = useState(false);
   const [draggedCategory, setDraggedCategory] = useState(null);
   const [addingRodeo, setAddingRodeo] = useState(null); // { catNombre, nombre, cantidad }
   const [dropOver, setDropOver] = useState(false);
@@ -2069,6 +2074,71 @@ function App() {
     }).then(r => r.json()).then(setPastoNdvi).catch(() => setPastoNdvi({}));
   }, [showPasto, pastoNdvi]);
 
+  useEffect(() => {
+    if (selectedPotrero?.nombre && historialPastoreosExpanded) {
+      cargarPastoreosDelPotrero(selectedPotrero.nombre);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedPotrero?.nombre, historialPastoreosExpanded]);
+
+  const registrarEventoPastoreo = async (categorias, potreroNombre, fechaSalida) => {
+    const feat = POSTREROS_GEOJSON.features.find(f => f.properties.nombre === potreroNombre);
+    const ha = feat?.properties.ha ?? 0;
+    const fechasIngreso = categorias.map(c => c.fecha_ingreso).filter(Boolean);
+    const fechaIngreso = fechasIngreso.length > 0 ? fechasIngreso.reduce((a, b) => (a < b ? a : b)) : null;
+    const diasOcupacion = fechaIngreso
+      ? Math.round((new Date(fechaSalida) - new Date(fechaIngreso)) / 86400000)
+      : null;
+    const animales = categorias.map(cat => ({
+      nombre: cat.nombre,
+      rodeo: cat.rodeo || null,
+      cantidad: cat.cantidad || 0,
+      peso_promedio: cat.peso_promedio || 0,
+      ev_unitario: EV_POR_CATEGORIA[cat.nombre] ?? 1.0,
+      ev_total: (cat.cantidad || 0) * (EV_POR_CATEGORIA[cat.nombre] ?? 1.0),
+      fecha_ingreso: cat.fecha_ingreso || null,
+    }));
+    const totalCabezas = animales.reduce((s, a) => s + a.cantidad, 0);
+    const totalEV = animales.reduce((s, a) => s + a.ev_total, 0);
+    const pesoVivoTotal = animales.reduce((s, a) => s + a.cantidad * a.peso_promedio, 0);
+    const evento = {
+      potrero: potreroNombre,
+      ha,
+      fecha_ingreso: fechaIngreso,
+      fecha_salida: fechaSalida,
+      dias_ocupacion: diasOcupacion,
+      animales,
+      total_cabezas: totalCabezas,
+      total_ev: parseFloat(totalEV.toFixed(1)),
+      carga_ev_ha: ha > 0 ? parseFloat((totalEV / ha).toFixed(3)) : null,
+      peso_vivo_total_kg: pesoVivoTotal,
+      carga_kg_ha: ha > 0 ? parseFloat((pesoVivoTotal / ha).toFixed(1)) : null,
+      año: new Date(fechaSalida).getFullYear(),
+      mes_salida: fechaSalida.slice(0, 7),
+    };
+    const docRef = await addDoc(collection(db, 'pastoreos'), evento);
+    setPastoreosCache(prev => ({
+      ...prev,
+      [potreroNombre]: [{ ...evento, docId: docRef.id }, ...(prev[potreroNombre] || [])],
+    }));
+  };
+
+  const cargarPastoreosDelPotrero = async (nombre) => {
+    if (pastoreosCache[nombre]) return;
+    setPastoreosLoading(true);
+    try {
+      const q = query(collection(db, 'pastoreos'), where('potrero', '==', nombre), orderBy('fecha_salida', 'desc'));
+      const snap = await getDocs(q);
+      const eventos = snap.docs.map(d => ({ ...d.data(), docId: d.id }));
+      setPastoreosCache(prev => ({ ...prev, [nombre]: eventos }));
+    } catch (e) {
+      console.error('Error cargando pastoreos:', e);
+      setPastoreosCache(prev => ({ ...prev, [nombre]: [] }));
+    } finally {
+      setPastoreosLoading(false);
+    }
+  };
+
   const cargarHaciendaDeFirestore = async () => {
     try {
       const [snapHacienda, snapHistorial] = await Promise.all([
@@ -2098,10 +2168,14 @@ function App() {
         ? { potrero: potreroNombre, fecha_ingreso: ahora, fecha_salida: null }
         : { potrero: null, fecha_ingreso: null, fecha_salida: ahora };
       await updateDoc(doc(db, 'hacienda', cat.docId), update);
-      if (!potreroNombre && cat.potrero) {
+      if (cat.potrero && cat.potrero !== potreroNombre) {
         const histRef = doc(db, 'historial_potreros', cat.potrero);
         await setDoc(histRef, { fecha_ultima_salida: ahora, nombre: cat.potrero }, { merge: true });
         setHistorial(prev => ({ ...prev, [cat.potrero]: { ...prev[cat.potrero], fecha_ultima_salida: ahora } }));
+        const otrasEnPotrero = hacienda.filter(h => h.potrero === cat.potrero && h.id !== categoriaId);
+        if (otrasEnPotrero.length === 0) {
+          await registrarEventoPastoreo([cat], cat.potrero, ahora);
+        }
       }
       setHacienda(prev => prev.map(h => h.id === categoriaId ? { ...h, ...update } : h));
     } catch (error) {
@@ -2120,6 +2194,9 @@ function App() {
       const histRef = doc(db, 'historial_potreros', origen);
       await setDoc(histRef, { fecha_ultima_salida: ahora, nombre: origen }, { merge: true });
       setHistorial(prev => ({ ...prev, [origen]: { ...prev[origen], fecha_ultima_salida: ahora } }));
+      if (categoriasOrigen.length > 0) {
+        await registrarEventoPastoreo(categoriasOrigen, origen, ahora);
+      }
       setHacienda(prev => prev.map(h =>
         h.potrero === origen ? { ...h, potrero: destino, fecha_ingreso: ahora, fecha_salida: null } : h
       ));
@@ -2459,6 +2536,58 @@ function App() {
                       <div style={{ marginTop: '0.4rem', textAlign: 'center', fontSize: '0.78rem', color: '#444', borderTop: '1px dashed #2a2a2a', paddingTop: '0.4rem' }}>Arrastrá hacienda acá para asignar</div>
                     )}
                     <button onClick={() => setSelectedPotrero(null)} style={{ position: 'absolute', top: '0.6rem', right: '0.6rem', background: 'none', border: 'none', color: '#aaa', fontSize: '1.1rem', cursor: 'pointer', padding: '0.2rem 0.4rem' }}>✕</button>
+
+                    {/* Historial de pastoreos */}
+                    <div style={{ marginTop: '0.85rem', borderTop: '1px solid #2a2a2a', paddingTop: '0.6rem' }}>
+                      <button
+                        onClick={() => setHistorialPastoreosExpanded(v => !v)}
+                        style={{ width: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'none', border: 'none', color: '#aaa', cursor: 'pointer', padding: '0.1rem 0', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.5px', fontWeight: '600' }}
+                      >
+                        <span>Historial de pastoreos</span>
+                        <span>{historialPastoreosExpanded ? '▲' : '▼'}</span>
+                      </button>
+                      {historialPastoreosExpanded && (
+                        <div style={{ marginTop: '0.5rem' }}>
+                          {pastoreosLoading && <div style={{ fontSize: '0.75rem', color: '#555', textAlign: 'center', padding: '0.5rem' }}>Cargando...</div>}
+                          {!pastoreosLoading && (pastoreosCache[selectedPotrero.nombre] || []).length === 0 && (
+                            <div style={{ fontSize: '0.75rem', color: '#444', textAlign: 'center', padding: '0.4rem' }}>Sin registros aún</div>
+                          )}
+                          {!pastoreosLoading && (pastoreosCache[selectedPotrero.nombre] || []).map((ev, i) => (
+                            <div key={ev.docId || i} style={{ backgroundColor: '#1a1a1a', borderRadius: '4px', padding: '0.55rem 0.65rem', marginBottom: '0.4rem', fontSize: '0.78rem', borderLeft: '3px solid #c41e3a' }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem' }}>
+                                <span style={{ color: '#ddd', fontWeight: '600' }}>
+                                  {ev.fecha_salida ? new Date(ev.fecha_salida).toLocaleDateString('es-AR', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'}
+                                </span>
+                                <span style={{ color: '#ffeb3b', fontWeight: '700' }}>
+                                  {ev.dias_ocupacion != null ? `${ev.dias_ocupacion} días` : '—'}
+                                </span>
+                              </div>
+                              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.3rem', marginBottom: '0.3rem' }}>
+                                <div style={{ textAlign: 'center', backgroundColor: '#222', borderRadius: '3px', padding: '0.2rem 0.3rem' }}>
+                                  <div style={{ fontSize: '0.63rem', color: '#777', textTransform: 'uppercase' }}>Cabezas</div>
+                                  <div style={{ fontWeight: '700', color: '#ddd' }}>{ev.total_cabezas?.toLocaleString() ?? '—'}</div>
+                                </div>
+                                <div style={{ textAlign: 'center', backgroundColor: '#222', borderRadius: '3px', padding: '0.2rem 0.3rem' }}>
+                                  <div style={{ fontSize: '0.63rem', color: '#777', textTransform: 'uppercase' }}>EV/ha</div>
+                                  <div style={{ fontWeight: '700', color: '#4caf50' }}>{ev.carga_ev_ha != null ? ev.carga_ev_ha.toFixed(2) : '—'}</div>
+                                </div>
+                                <div style={{ textAlign: 'center', backgroundColor: '#222', borderRadius: '3px', padding: '0.2rem 0.3rem' }}>
+                                  <div style={{ fontSize: '0.63rem', color: '#777', textTransform: 'uppercase' }}>kg PV/ha</div>
+                                  <div style={{ fontWeight: '700', color: '#64b5f6' }}>{ev.carga_kg_ha != null ? ev.carga_kg_ha.toFixed(0) : '—'}</div>
+                                </div>
+                              </div>
+                              <div style={{ fontSize: '0.7rem', color: '#555' }}>
+                                {(ev.animales || []).map((a, j) => (
+                                  <span key={j} style={{ marginRight: '0.5rem' }}>
+                                    {a.rodeo ? `${a.nombre}·${a.rodeo}` : a.nombre}: {a.cantidad}
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 ) : (
                   <div style={{ padding: '0.85rem', backgroundColor: '#2a2a2a', borderRadius: '4px', border: '1px dashed #333', textAlign: 'center', fontSize: '0.82rem', color: '#444' }}>
