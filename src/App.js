@@ -3,7 +3,7 @@ import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import * as XLSX from 'xlsx';
 import { initializeApp } from 'firebase/app';
-import { getFirestore, collection, getDocs, addDoc, updateDoc, deleteDoc, doc, setDoc, query, where, orderBy } from 'firebase/firestore';
+import { getFirestore, collection, getDocs, addDoc, updateDoc, deleteDoc, doc, setDoc, query, where, orderBy, limit } from 'firebase/firestore';
 import { getAuth, signOut, onAuthStateChanged, GoogleAuthProvider, signInWithRedirect, signInWithPopup, getRedirectResult } from 'firebase/auth';
 import './App.css';
 
@@ -432,6 +432,311 @@ function BalanceChart({ months, balanceKg }) {
     </div>
   );
 }
+
+// ─── Mercados ─────────────────────────────────────────────────────────────────
+
+const MERCADO_CATS = [
+  { key: 'novillito',  label: 'Novillito',  color: '#42a5f5' },
+  { key: 'novillo',    label: 'Novillo',    color: '#1e88e5' },
+  { key: 'vaquillona', label: 'Vaquillona', color: '#ab47bc' },
+  { key: 'vaca',       label: 'Vaca',       color: '#ef5350' },
+  { key: 'toro',       label: 'Toro',       color: '#ff9800' },
+  { key: 'mej',        label: 'MEJ',        color: '#26c6da' },
+  { key: 'inmag',      label: 'INMAG',      color: '#ffd54f' },
+];
+
+function PrecioEvolucionChart({ data, activeCats }) {
+  if (!data || data.length < 2) return null;
+  const sorted = [...data].sort((a, b) => a.fecha.localeCompare(b.fecha));
+  const n = sorted.length;
+  const activeCatsList = MERCADO_CATS.filter(c => activeCats.has(c.key));
+  if (activeCatsList.length === 0) return null;
+
+  const PAD_L = 68, PAD_R = 20, PAD_T = 20, PAD_B = 50;
+  const chartH = 200;
+  const ptSpacing = Math.max(38, Math.min(80, 700 / Math.max(n - 1, 1)));
+  const svgW = PAD_L + (n - 1) * ptSpacing + PAD_R;
+  const svgH = PAD_T + chartH + PAD_B;
+
+  const allVals = sorted.flatMap(d => activeCatsList.map(c => d[c.key]).filter(v => v != null && v > 0));
+  if (allVals.length === 0) return null;
+  const maxVal = Math.max(...allVals);
+  const minVal = Math.min(...allVals) * 0.97;
+  const range = maxVal - minVal || 1;
+
+  const toX = i => PAD_L + i * ptSpacing;
+  const toY = v => PAD_T + chartH - ((v - minVal) / range) * chartH;
+  const gridVals = [0, 0.25, 0.5, 0.75, 1].map(p => Math.round(minVal + p * range));
+  const fmtY = v => v >= 1000 ? `$${(v / 1000).toFixed(1)}k` : `$${v}`;
+
+  return (
+    <div style={{ overflowX: 'auto' }}>
+      <svg width={svgW} height={svgH} style={{ display: 'block' }}>
+        {gridVals.map(v => (
+          <g key={v}>
+            <line x1={PAD_L} y1={toY(v)} x2={svgW - PAD_R} y2={toY(v)} stroke="#1a1a1a" strokeWidth="1" />
+            <text x={PAD_L - 5} y={toY(v) + 4} textAnchor="end" fontSize="9" fill="#555">{fmtY(v)}</text>
+          </g>
+        ))}
+        <text x={10} y={PAD_T + chartH / 2} textAnchor="middle" fontSize="9" fill="#555" transform={`rotate(-90,10,${PAD_T + chartH / 2})`}>ARS/kg</text>
+
+        {activeCatsList.map(cat => {
+          const pts = sorted.map((d, i) => d[cat.key] != null ? { x: toX(i), y: toY(d[cat.key]) } : null);
+          const segs = []; let cur = [];
+          pts.forEach(p => {
+            if (p) { cur.push(`${p.x},${p.y}`); }
+            else { if (cur.length) { segs.push(cur.join(' ')); cur = []; } }
+          });
+          if (cur.length) segs.push(cur.join(' '));
+          return (
+            <g key={cat.key}>
+              {segs.map((seg, si) => <polyline key={si} points={seg} fill="none" stroke={cat.color} strokeWidth="2" strokeLinejoin="round" />)}
+              {pts.map((p, i) => p ? <circle key={i} cx={p.x} cy={p.y} r="3" fill={cat.color} /> : null)}
+            </g>
+          );
+        })}
+
+        {sorted.map((d, i) => (
+          <text key={i} x={toX(i)} y={PAD_T + chartH + 14} textAnchor="middle" fontSize="8" fill="#444"
+            transform={`rotate(-45,${toX(i)},${PAD_T + chartH + 14})`}>
+            {d.fecha?.slice(5).replace('-', '/')}
+          </text>
+        ))}
+
+        {activeCatsList.map((c, i) => (
+          <g key={c.key}>
+            <line x1={PAD_L + i * 75} y1={8} x2={PAD_L + i * 75 + 14} y2={8} stroke={c.color} strokeWidth="2" />
+            <text x={PAD_L + i * 75 + 17} y={12} fontSize="8" fill={c.color}>{c.label}</text>
+          </g>
+        ))}
+      </svg>
+    </div>
+  );
+}
+
+function MercadosPanel() {
+  const [precios, setPrecios] = useState(null);
+  const [cargando, setCargando] = useState(false);
+  const [activeCats, setActiveCats] = useState(new Set(['novillito', 'novillo', 'vaca', 'inmag']));
+  const [formVisible, setFormVisible] = useState(false);
+  const [formData, setFormData] = useState({ fecha: new Date().toISOString().slice(0, 10), ...Object.fromEntries(MERCADO_CATS.map(c => [c.key, ''])) });
+  const [guardando, setGuardando] = useState(false);
+  const [eliminando, setEliminando] = useState(null);
+  const [autoFetch, setAutoFetch] = useState({ loading: false, msg: null });
+
+  useEffect(() => {
+    setCargando(true);
+    getDocs(query(collection(db, 'precios_mercado'), orderBy('fecha', 'desc'), limit(60)))
+      .then(snap => setPrecios(snap.docs.map(d => ({ ...d.data(), docId: d.id }))))
+      .catch(() => setPrecios([]))
+      .finally(() => setCargando(false));
+  }, []);
+
+  const latest = precios?.[0];
+  const prev = precios?.[1];
+
+  const toggleCat = key => setActiveCats(prev => {
+    const next = new Set(prev);
+    next.has(key) ? next.delete(key) : next.add(key);
+    return next;
+  });
+
+  const tryAutoFetch = async () => {
+    setAutoFetch({ loading: true, msg: null });
+    try {
+      const r = await fetch('/api/mercados');
+      const json = await r.json();
+      if (json.ok && json.data) {
+        setAutoFetch({ loading: false, msg: `Datos obtenidos de ${json.source}. Revisá y guardá.` });
+      } else {
+        setAutoFetch({ loading: false, msg: `No disponible: ${json.error || 'fuente sin datos'}. Ingresá los precios manualmente.` });
+      }
+    } catch (e) {
+      setAutoFetch({ loading: false, msg: 'Error de red. Ingresá los precios manualmente.' });
+    }
+    setFormVisible(true);
+  };
+
+  const guardar = async () => {
+    setGuardando(true);
+    try {
+      const entry = {
+        fecha: formData.fecha,
+        fuente: 'manual',
+        ...Object.fromEntries(MERCADO_CATS.map(c => [c.key, parseFloat(formData[c.key]) || null])),
+      };
+      const ref = await addDoc(collection(db, 'precios_mercado'), entry);
+      setPrecios(prev => [{ ...entry, docId: ref.id }, ...(prev || [])].sort((a, b) => b.fecha.localeCompare(a.fecha)));
+      setFormVisible(false);
+      setAutoFetch({ loading: false, msg: null });
+      setFormData({ fecha: new Date().toISOString().slice(0, 10), ...Object.fromEntries(MERCADO_CATS.map(c => [c.key, ''])) });
+    } catch (e) { console.error(e); }
+    setGuardando(false);
+  };
+
+  const eliminar = async (docId) => {
+    setEliminando(docId);
+    try {
+      await deleteDoc(doc(db, 'precios_mercado', docId));
+      setPrecios(prev => prev.filter(p => p.docId !== docId));
+    } catch (e) { console.error(e); }
+    setEliminando(null);
+  };
+
+  const exportarExcel = () => {
+    if (!precios?.length) return;
+    const sorted = [...precios].sort((a, b) => a.fecha.localeCompare(b.fecha));
+    const wb = XLSX.utils.book_new();
+    const rows = [
+      ['Fecha', ...MERCADO_CATS.map(c => c.label)],
+      ...sorted.map(p => [p.fecha, ...MERCADO_CATS.map(c => p[c.key] ?? '')]),
+    ];
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rows), 'Precios Mercado');
+    XLSX.writeFile(wb, `precios_mercado_${new Date().getFullYear()}.xlsx`);
+  };
+
+  const fmtARS = v => v != null ? `$${Math.round(v).toLocaleString('es-AR')}` : '—';
+  const inpStyle = { padding: '0.35rem 0.55rem', backgroundColor: '#1a1a1a', border: '1px solid #2a2a2a', borderRadius: '4px', color: '#ddd', fontSize: '0.8rem' };
+
+  return (
+    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', backgroundColor: '#0d0d0d', overflow: 'hidden' }}>
+      {/* Sub-header */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.75rem 1.5rem', backgroundColor: '#111', borderBottom: '1px solid #222', flexShrink: 0, flexWrap: 'wrap' }}>
+        <span style={{ fontSize: '0.85rem', fontWeight: '700', color: '#ffd54f', letterSpacing: '0.5px', textTransform: 'uppercase' }}>💰 Mercados</span>
+        <span style={{ fontSize: '0.72rem', color: '#444' }}>Liniers · ROSGAN · ARS/kg vivo</span>
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+          <button onClick={exportarExcel} disabled={!precios?.length} style={{ padding: '0.32rem 0.75rem', fontSize: '0.75rem', fontWeight: '600', backgroundColor: 'transparent', color: precios?.length ? '#ffd54f' : '#333', border: `1px solid ${precios?.length ? '#8d6e00' : '#222'}`, borderRadius: '4px', cursor: precios?.length ? 'pointer' : 'default' }}>
+            Exportar Excel
+          </button>
+          <button onClick={tryAutoFetch} disabled={autoFetch.loading} style={{ padding: '0.32rem 0.75rem', fontSize: '0.75rem', fontWeight: '600', backgroundColor: 'transparent', color: '#888', border: '1px solid #2a2a2a', borderRadius: '4px', cursor: 'pointer' }}>
+            {autoFetch.loading ? 'Buscando...' : '↻ Auto'}
+          </button>
+          <button onClick={() => { setFormVisible(v => !v); setAutoFetch({ loading: false, msg: null }); }} style={{ padding: '0.35rem 0.9rem', fontSize: '0.8rem', fontWeight: '700', backgroundColor: formVisible ? '#2a2a1a' : '#1a1a0a', color: '#ffd54f', border: '1px solid #8d6e00', borderRadius: '4px', cursor: 'pointer' }}>
+            {formVisible ? 'Cancelar' : '+ Cargar precios'}
+          </button>
+        </div>
+      </div>
+
+      <div style={{ flex: 1, overflow: 'auto', padding: '1.25rem 1.5rem' }}>
+
+        {/* Form */}
+        {formVisible && (
+          <div style={{ backgroundColor: '#131313', border: '1px solid #2a2a2a', borderRadius: '6px', padding: '1rem', marginBottom: '1.25rem' }}>
+            <div style={{ fontSize: '0.72rem', color: '#666', textTransform: 'uppercase', letterSpacing: '0.4px', marginBottom: '0.75rem' }}>
+              Precios de mercado — ARS/kg vivo
+              {autoFetch.msg && <span style={{ marginLeft: '1rem', color: autoFetch.msg.startsWith('Datos') ? '#4caf50' : '#ef5350', textTransform: 'none', letterSpacing: 0 }}>{autoFetch.msg}</span>}
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.75rem', alignItems: 'flex-end' }}>
+              <div>
+                <div style={{ fontSize: '0.62rem', color: '#555', textTransform: 'uppercase', marginBottom: '0.2rem' }}>Fecha</div>
+                <input type="date" value={formData.fecha} onChange={e => setFormData(f => ({ ...f, fecha: e.target.value }))} style={inpStyle} />
+              </div>
+              {MERCADO_CATS.map(cat => (
+                <div key={cat.key}>
+                  <div style={{ fontSize: '0.62rem', color: cat.color, textTransform: 'uppercase', marginBottom: '0.2rem', fontWeight: '700' }}>{cat.label}</div>
+                  <input type="number" min="0" step="1" value={formData[cat.key]} onChange={e => setFormData(f => ({ ...f, [cat.key]: e.target.value }))} placeholder="ARS/kg" style={{ ...inpStyle, width: '92px' }} />
+                </div>
+              ))}
+              <button onClick={guardar} disabled={guardando} style={{ padding: '0.38rem 1.1rem', backgroundColor: '#1a1a0a', color: '#ffd54f', border: '1px solid #8d6e00', borderRadius: '4px', cursor: 'pointer', fontSize: '0.82rem', fontWeight: '700' }}>
+                {guardando ? 'Guardando...' : 'Guardar'}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {cargando && <div style={{ color: '#555', padding: '3rem', textAlign: 'center' }}>Cargando...</div>}
+
+        {!cargando && precios != null && (
+          precios.length === 0 ? (
+            <div style={{ textAlign: 'center', color: '#444', padding: '4rem 2rem', fontSize: '0.85rem', lineHeight: 1.8 }}>
+              No hay precios cargados todavía.<br />
+              Usá <strong style={{ color: '#ffd54f' }}>+ Cargar precios</strong> para agregar el primer registro semanal,<br />
+              o <strong style={{ color: '#888' }}>↻ Auto</strong> para intentar obtenerlos automáticamente.
+            </div>
+          ) : (
+            <>
+              {/* KPI cards */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(145px, 1fr))', gap: '0.65rem', marginBottom: '1.5rem' }}>
+                {MERCADO_CATS.map(cat => {
+                  const val = latest?.[cat.key];
+                  const prevVal = prev?.[cat.key];
+                  const delta = val != null && prevVal != null ? ((val - prevVal) / prevVal * 100) : null;
+                  return (
+                    <div key={cat.key} style={{ backgroundColor: '#131313', borderTop: `3px solid ${cat.color}`, border: `1px solid ${cat.color}22`, borderRadius: '6px', padding: '0.8rem 1rem' }}>
+                      <div style={{ fontSize: '0.65rem', fontWeight: '700', color: cat.color, textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '0.35rem' }}>{cat.label}</div>
+                      <div style={{ fontSize: '1.55rem', fontWeight: '700', color: '#fff', lineHeight: 1.1, fontVariantNumeric: 'tabular-nums' }}>{fmtARS(val)}</div>
+                      <div style={{ fontSize: '0.62rem', color: '#444', marginTop: '0.2rem' }}>ARS/kg · {latest?.fecha?.slice(5).replace('-', '/')}</div>
+                      {delta != null && (
+                        <div style={{ fontSize: '0.72rem', fontWeight: '700', marginTop: '0.25rem', color: delta > 0 ? '#4caf50' : delta < 0 ? '#ef5350' : '#888' }}>
+                          {delta > 0 ? '▲' : delta < 0 ? '▼' : '●'} {Math.abs(delta).toFixed(1)}% vs sem. ant.
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Chart toggle + chart */}
+              {precios.length > 1 && (
+                <div style={{ marginBottom: '1.5rem' }}>
+                  <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap', marginBottom: '0.6rem' }}>
+                    {MERCADO_CATS.map(cat => (
+                      <button key={cat.key} onClick={() => toggleCat(cat.key)} style={{
+                        padding: '0.22rem 0.6rem', fontSize: '0.73rem', fontWeight: '600',
+                        backgroundColor: activeCats.has(cat.key) ? `${cat.color}1a` : 'transparent',
+                        color: activeCats.has(cat.key) ? cat.color : '#333',
+                        border: `1px solid ${activeCats.has(cat.key) ? cat.color : '#1e1e1e'}`,
+                        borderRadius: '4px', cursor: 'pointer',
+                      }}>{cat.label}</button>
+                    ))}
+                  </div>
+                  <div style={{ backgroundColor: '#111', borderRadius: '6px', padding: '0.75rem 0.75rem 0.25rem' }}>
+                    <PrecioEvolucionChart data={precios} activeCats={activeCats} />
+                  </div>
+                </div>
+              )}
+
+              {/* Table */}
+              <h3 style={{ fontSize: '0.75rem', color: '#555', textTransform: 'uppercase', letterSpacing: '0.5px', margin: '0 0 0.5rem 0' }}>Historial</h3>
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem', minWidth: '650px' }}>
+                  <thead>
+                    <tr style={{ backgroundColor: '#1a1a1a' }}>
+                      <th style={{ padding: '0.45rem 0.65rem', textAlign: 'left', color: '#555', fontWeight: '600', textTransform: 'uppercase', fontSize: '0.66rem', letterSpacing: '0.4px', borderBottom: '1px solid #2a2a2a' }}>Fecha</th>
+                      {MERCADO_CATS.map(c => (
+                        <th key={c.key} style={{ padding: '0.45rem 0.65rem', textAlign: 'right', color: c.color, fontWeight: '700', textTransform: 'uppercase', fontSize: '0.66rem', letterSpacing: '0.3px', borderBottom: '1px solid #2a2a2a' }}>{c.label}</th>
+                      ))}
+                      <th style={{ width: '30px', borderBottom: '1px solid #2a2a2a' }} />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {precios.map((p, i) => (
+                      <tr key={p.docId} style={{ backgroundColor: i % 2 === 0 ? '#111' : '#131313', borderBottom: '1px solid #1e1e1e' }}>
+                        <td style={{ padding: '0.4rem 0.65rem', color: '#ccc', fontWeight: '600', whiteSpace: 'nowrap' }}>
+                          {new Date(p.fecha + 'T12:00:00').toLocaleDateString('es-AR', { day: '2-digit', month: 'short', year: 'numeric' })}
+                        </td>
+                        {MERCADO_CATS.map(c => (
+                          <td key={c.key} style={{ padding: '0.4rem 0.65rem', textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: p[c.key] != null ? '#ddd' : '#222' }}>
+                            {fmtARS(p[c.key])}
+                          </td>
+                        ))}
+                        <td style={{ padding: '0.4rem 0.5rem', textAlign: 'right' }}>
+                          <button onClick={() => eliminar(p.docId)} disabled={eliminando === p.docId} title="Eliminar" style={{ background: 'none', border: 'none', color: '#2a2a2a', cursor: 'pointer', fontSize: '0.85rem', padding: '0.1rem 0.3rem' }}>✕</button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Clima ────────────────────────────────────────────────────────────────────
 
 function LluviaChart({ apiData, manualData, year }) {
   const MESES = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
@@ -2982,10 +3287,11 @@ function App() {
   }
 
   const sidebarItems = [
-    { id: 'mapa',     icon: '🗺',  label: 'Mapa'     },
-    { id: 'forraje',  icon: '🌿',  label: 'Forraje'  },
-    { id: 'planilla', icon: '📋',  label: 'Planilla' },
-    { id: 'clima',    icon: '🌤',  label: 'Clima'    },
+    { id: 'mapa',      icon: '🗺',  label: 'Mapa'     },
+    { id: 'forraje',   icon: '🌿',  label: 'Forraje'  },
+    { id: 'planilla',  icon: '📋',  label: 'Planilla' },
+    { id: 'clima',     icon: '🌤',  label: 'Clima'    },
+    { id: 'mercados',  icon: '💰',  label: 'Mercados' },
   ];
 
   return (
@@ -3380,6 +3686,11 @@ function App() {
           {/* ── CLIMA section ── */}
           {activeSection === 'clima' && (
             <ClimaPanel />
+          )}
+
+          {/* ── MERCADOS section ── */}
+          {activeSection === 'mercados' && (
+            <MercadosPanel />
           )}
 
         </div>
