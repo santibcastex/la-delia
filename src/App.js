@@ -546,8 +546,17 @@ function MercadosPanel() {
     try {
       const r = await fetch('/api/mercados');
       const json = await r.json();
-      if (json.ok && json.data) {
-        setAutoFetch({ loading: false, msg: `Datos obtenidos de ${json.source}. Revisá y guardá.` });
+      if (json.ok && json.precios) {
+        // Pre-populate form with fetched prices
+        setFormData(f => ({
+          ...f,
+          fecha: json.fecha || f.fecha,
+          ...Object.fromEntries(
+            MERCADO_CATS.map(c => [c.key, json.precios[c.key] != null ? String(Math.round(json.precios[c.key])) : f[c.key]])
+          ),
+        }));
+        const mes = json.fecha ? ` (${json.fecha})` : '';
+        setAutoFetch({ loading: false, msg: `Datos de ${json.source}${mes}. Revisá y guardá.` });
       } else {
         setAutoFetch({ loading: false, msg: `No disponible: ${json.error || 'fuente sin datos'}. Ingresá los precios manualmente.` });
       }
