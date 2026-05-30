@@ -149,31 +149,56 @@ async function tryCSV(url, sourceName) {
 export default async function handler(req, res) {
   if (req.method !== 'GET') return res.status(405).end();
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Cache-Control', 'public, s-maxage=3600, stale-while-revalidate=7200');
+
+  const debug = req.query?.debug === '1';
+  const errors = [];
+
+  if (!debug) {
+    res.setHeader('Cache-Control', 'public, s-maxage=3600, stale-while-revalidate=7200');
+  }
 
   // 1. CKAN datastore JSON — Ministry of Agriculture portal
   try {
     const d = await tryCKAN('https://datos.magyp.gob.ar');
     return res.status(200).json({ ok: true, ...d });
-  } catch (_) {}
+  } catch (e) { errors.push(`CKAN magyp: ${e.message}`); }
 
   // 2. CKAN mirror on main open-data portal
   try {
     const d = await tryCKAN('https://www.datos.gob.ar');
     return res.status(200).json({ ok: true, ...d });
-  } catch (_) {}
+  } catch (e) { errors.push(`CKAN datos.gob.ar: ${e.message}`); }
 
   // 3. Direct CSV download (infra.datos.gob.ar)
   const csvUrls = [
-    ['https://infra.datos.gob.ar/catalog/agroindustria/dataset/5/distribution/5.1/download/mercado-liniers-precio-cantidad-cabezas-promedio.csv', 'CSV datos.gob.ar (5.1)'],
-    ['https://infra.datos.gob.ar/catalog/agroindustria/dataset/131/distribution/131.1/download/precios-hacienda-en-pie.csv', 'CSV datos.gob.ar (131.1)'],
+    ['https://infra.datos.gob.ar/catalog/agroindustria/dataset/5/distribution/5.1/download/mercado-liniers-precio-cantidad-cabezas-promedio.csv', 'CSV (5.1)'],
+    ['https://infra.datos.gob.ar/catalog/agroindustria/dataset/131/distribution/131.1/download/precios-hacienda-en-pie.csv', 'CSV (131.1)'],
+    // Also try resource_show to discover the real download URL
+    [`https://www.datos.gob.ar/api/3/action/resource_show?id=${CKAN_ID}`, 'resource_show'],
   ];
   for (const [url, name] of csvUrls) {
     try {
-      const d = await tryCSV(url, name);
-      return res.status(200).json({ ok: true, ...d });
-    } catch (_) {}
+      if (name === 'resource_show') {
+        // Use resource_show to find the actual download URL then fetch CSV
+        const r = await fetchWithTimeout(url);
+        if (r.ok) {
+          const j = await r.json();
+          const downloadUrl = j?.result?.url;
+          if (downloadUrl) {
+            const d = await tryCSV(downloadUrl, 'CSV (resource_show)');
+            return res.status(200).json({ ok: true, ...d });
+          }
+        }
+        throw new Error('resource_show no url');
+      } else {
+        const d = await tryCSV(url, name);
+        return res.status(200).json({ ok: true, ...d });
+      }
+    } catch (e) { errors.push(`${name}: ${e.message}`); }
   }
 
+  if (debug) {
+    return res.status(503).json({ ok: false, error: 'Fuente de datos no disponible', debug: errors });
+  }
   return res.status(503).json({ ok: false, error: 'Fuente de datos no disponible' });
 }
