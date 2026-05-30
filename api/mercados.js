@@ -1,41 +1,26 @@
 // Proxy to Argentine cattle market price data
-// Source 1: datos.magyp.gob.ar CKAN — Mercado de Liniers monthly summary
-// Source 2: datos.gob.ar CKAN — mirror of same dataset
-// Source 3: infra.datos.gob.ar — direct CSV download
+// Primary source: deCampoaCampo.com /gh_funciones.php?function=getListadoPreciosGordo
+// (Liniers market — prices include 10.5% IVA, stored as $/kg vivo + IVA)
 // Cached 1 hour server-side
 
-const CKAN_ID = 'bd15f73c-fe07-41d9-9dd9-58e3244cad59';
+const DCAC_URL = 'https://www.decampoacampo.com/gh_funciones.php?function=getListadoPreciosGordo';
 
-// Map Spanish category names → internal keys used in the app
-const CAT_MAP = {
-  'novillito': 'novillito',
-  'novillitos': 'novillito',
-  'novillo': 'novillo',
-  'novillos': 'novillo',
-  'novillo especial': 'novillo',
-  'novillo 1': 'novillo',
-  'novillo 2': 'novillo',
-  'vaquillona': 'vaquillona',
-  'vaquillonas': 'vaquillona',
-  'vaquillona especial': 'vaquillona',
-  'vaca': 'vaca',
-  'vacas': 'vaca',
-  'vaca manufactura': 'vaca',
-  'vaca conserva': 'vaca',
-  'vaca industria': 'vaca',
-  'vaca c/cria': 'vaca',
-  'vaca con cria': 'vaca',
-  'toro': 'toro',
-  'toros': 'toro',
-  'toro indice': 'toro',
-  'mej': 'mej',
-  'media edad joven': 'mej',
-  'inmag': 'inmag',
-  'invernada macho grande': 'inmag',
-  'invernada macho': 'inmag',
-};
+// Map deCampoaCampo category names → internal keys
+// Categories contain weight ranges like "Novillitos hasta 390 Kg."
+// We take the first match per key (highest-valued / lightest range usually listed first)
+function catKey(nombre) {
+  const n = nombre.toLowerCase();
+  if (n.includes('novillito'))  return 'novillito';
+  if (n.includes('novillo'))    return 'novillo';
+  if (n.includes('vaquillona')) return 'vaquillona';
+  if (n.includes('vaca'))       return 'vaca';
+  if (n.includes('toro'))       return 'toro';
+  if (n.includes('mej') || n.includes('media edad joven')) return 'mej';
+  if (n.includes('inmag') || n.includes('invernada macho')) return 'inmag';
+  return null;
+}
 
-async function fetchWithTimeout(url, opts = {}, ms = 8000) {
+async function fetchWithTimeout(url, opts = {}, ms = 9000) {
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), ms);
   try {
@@ -43,8 +28,9 @@ async function fetchWithTimeout(url, opts = {}, ms = 8000) {
       ...opts,
       signal: ctrl.signal,
       headers: {
-        Accept: 'application/json, text/csv, */*',
-        'User-Agent': 'Mozilla/5.0',
+        'User-Agent': 'Mozilla/5.0 (compatible; LaDelia/1.0)',
+        Accept: 'application/json, text/html, */*',
+        Referer: 'https://www.decampoacampo.com/__dcac/outside/liniers/precios',
         ...(opts.headers || {}),
       },
     });
@@ -56,124 +42,99 @@ async function fetchWithTimeout(url, opts = {}, ms = 8000) {
   }
 }
 
-function normalizeCKANRecords(records, fields) {
-  // Build lowercase field index
-  const fieldNames = fields.map(f => String(f.id || f.name || '').toLowerCase());
-
-  const findCol = (...patterns) => {
-    for (const p of patterns) {
-      const i = fieldNames.findIndex(f => f.includes(p));
-      if (i >= 0) return fields[i].id || fields[i].name;
-    }
-    return null;
-  };
-
-  const fechaCol  = findCol('fecha', 'date', 'periodo', 'anio', 'año');
-  const catCol    = findCol('categoria', 'category', 'tipo', 'raza', 'clase', 'denominacion');
-  const precioCol = findCol('precio_prom', 'precio', 'price', 'valor', 'importe');
-
-  if (!fechaCol || !catCol || !precioCol) return null;
-
-  // Aggregate by date → category → latest price
-  const byDate = {};
-  for (const rec of records) {
-    const fecha = String(rec[fechaCol] || '').slice(0, 10);
-    if (!fecha) continue;
-    const cat = String(rec[catCol] || '').toLowerCase().trim().replace(/\s+/g, ' ');
-    const key = CAT_MAP[cat];
-    if (!key) continue;
-    const precio = parseFloat(rec[precioCol] || 0);
-    if (!byDate[fecha]) byDate[fecha] = {};
-    if (!byDate[fecha][key]) byDate[fecha][key] = precio; // keep first per date (sorted desc)
-  }
-
-  const dates = Object.keys(byDate).sort().reverse();
-  if (!dates.length) return null;
-  const fecha = dates[0];
-  return { fecha, precios: byDate[fecha] };
-}
-
-async function tryCKAN(baseUrl) {
-  // Try datastore first (JSON rows), then fallback to CSV stream
-  const url = `${baseUrl}/api/3/action/datastore_search?resource_id=${CKAN_ID}&limit=300&sort=fecha+desc`;
-  const r = await fetchWithTimeout(url);
+// ── Source 1: deCampoaCampo JSON endpoint ─────────────────────────────────────
+async function tryDCaC() {
+  const r = await fetchWithTimeout(DCAC_URL);
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
   const json = await r.json();
-  if (!json.success || !json.result?.records?.length) throw new Error('empty result');
-  const norm = normalizeCKANRecords(json.result.records, json.result.fields || []);
-  if (!norm) throw new Error('normalize failed — unexpected columns');
-  return { ...norm, source: `CKAN (${baseUrl})` };
-}
+  if (!json.data || !Array.isArray(json.data)) throw new Error('unexpected shape: ' + JSON.stringify(json).slice(0, 100));
 
-async function tryCSV(url, sourceName) {
-  const r = await fetchWithTimeout(url, { headers: { Accept: 'text/csv' } });
-  if (!r.ok) throw new Error(`HTTP ${r.status}`);
-  const text = await r.text();
-  const lines = text.trim().split('\n');
-  if (lines.length < 2) throw new Error('CSV empty');
-
-  // Parse header
-  const header = lines[0].split(',').map(h => h.replace(/"/g, '').trim().toLowerCase());
-  const findCol = (...pats) => {
-    for (const p of pats) {
-      const i = header.findIndex(h => h.includes(p));
-      if (i >= 0) return i;
-    }
-    return -1;
-  };
-
-  const fechaIdx  = findCol('fecha', 'date', 'periodo');
-  const catIdx    = findCol('categoria', 'category', 'tipo', 'clase');
-  const precioIdx = findCol('precio_prom', 'precio', 'price', 'valor');
-
-  if (fechaIdx < 0 || catIdx < 0 || precioIdx < 0) throw new Error('CSV missing columns');
-
-  const byDate = {};
-  for (const line of lines.slice(1)) {
-    const cols = line.split(',').map(c => c.replace(/"/g, '').trim());
-    const fecha = cols[fechaIdx]?.slice(0, 10);
-    const cat = (cols[catIdx] || '').toLowerCase().replace(/\s+/g, ' ');
-    const key = CAT_MAP[cat];
-    if (!fecha || !key) continue;
-    const precio = parseFloat(cols[precioIdx] || 0);
-    if (!byDate[fecha]) byDate[fecha] = {};
-    if (!byDate[fecha][key]) byDate[fecha][key] = precio;
+  // Parse date: json.hoy is like "27/05/2026" (DD/MM/YYYY)
+  let fecha = '';
+  if (json.hoy) {
+    const [d, m, y] = json.hoy.split('/');
+    fecha = `${y}-${m?.padStart(2,'0')}-${d?.padStart(2,'0')}`;
   }
 
-  const dates = Object.keys(byDate).sort().reverse();
-  if (!dates.length) throw new Error('CSV no matching rows');
-  const fecha = dates[0];
-  return { fecha, precios: byDate[fecha], source: sourceName };
+  // Aggregate by category (first occurrence wins — highest weight category)
+  const precios = {};
+  for (const item of json.data) {
+    const key = catKey(item.categoria || '');
+    if (!key || precios[key]) continue;
+    const precio = parseFloat(item.precio_semana_1);
+    if (precio > 0) {
+      // Prices are $/kg + 10.5% IVA → divide to get $/kg sin IVA
+      precios[key] = Math.round(precio / 1.105);
+    }
+  }
+
+  if (Object.keys(precios).length === 0) throw new Error('no categories matched');
+  return { fecha, precios, source: 'deCampoaCampo / Liniers' };
 }
 
+// ── Source 2: deCampoaCampo HTML scraper (fallback if JSON changes) ───────────
+async function tryDCaCHTML() {
+  const r = await fetchWithTimeout('https://www.decampoacampo.com/__dcac/outside/liniers/precios', {
+    headers: { Accept: 'text/html' },
+  });
+  if (!r.ok) throw new Error(`HTML HTTP ${r.status}`);
+  const html = await r.text();
+
+  // Extract date
+  const dateM = html.match(/Ventas del (\d{2})\/(\d{2})\/(\d{4})/);
+  const fecha = dateM ? `${dateM[3]}-${dateM[2]}-${dateM[1]}` : '';
+
+  // Extract inline price data from HTML table cells rendered by JS
+  // (won't contain prices since they're loaded async — but try anyway)
+  const cells = [];
+  const tdRe = /<td[^>]*>([\s\S]*?)<\/td>/gi;
+  let m;
+  while ((m = tdRe.exec(html)) !== null) {
+    cells.push(m[1].replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').trim());
+  }
+
+  const precios = {};
+  for (let i = 0; i < cells.length; i++) {
+    const key = catKey(cells[i]);
+    if (!key || precios[key]) continue;
+    for (let j = i + 1; j < Math.min(i + 5, cells.length); j++) {
+      const num = parseFloat(cells[j].replace(/\./g, '').replace(',', '.'));
+      if (num > 500 && num < 200000) {
+        precios[key] = Math.round(num / 1.105);
+        break;
+      }
+    }
+  }
+
+  if (Object.keys(precios).length === 0) throw new Error('HTML: no prices extracted');
+  return { fecha, precios, source: 'deCampoaCampo HTML / Liniers' };
+}
+
+// ── Handler ───────────────────────────────────────────────────────────────────
 export default async function handler(req, res) {
   if (req.method !== 'GET') return res.status(405).end();
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Cache-Control', 'public, s-maxage=3600, stale-while-revalidate=7200');
 
-  // 1. CKAN datastore JSON — Ministry of Agriculture portal
-  try {
-    const d = await tryCKAN('https://datos.magyp.gob.ar');
-    return res.status(200).json({ ok: true, ...d });
-  } catch (_) {}
+  const debug = req.query?.debug === '1';
+  if (!debug) res.setHeader('Cache-Control', 'public, s-maxage=3600, stale-while-revalidate=7200');
 
-  // 2. CKAN mirror on main open-data portal
-  try {
-    const d = await tryCKAN('https://www.datos.gob.ar');
-    return res.status(200).json({ ok: true, ...d });
-  } catch (_) {}
+  const errors = [];
 
-  // 3. Direct CSV download (infra.datos.gob.ar)
-  const csvUrls = [
-    ['https://infra.datos.gob.ar/catalog/agroindustria/dataset/5/distribution/5.1/download/mercado-liniers-precio-cantidad-cabezas-promedio.csv', 'CSV datos.gob.ar (5.1)'],
-    ['https://infra.datos.gob.ar/catalog/agroindustria/dataset/131/distribution/131.1/download/precios-hacienda-en-pie.csv', 'CSV datos.gob.ar (131.1)'],
-  ];
-  for (const [url, name] of csvUrls) {
+  const attempt = async (label, fn) => {
     try {
-      const d = await tryCSV(url, name);
+      const d = await fn();
       return res.status(200).json({ ok: true, ...d });
-    } catch (_) {}
-  }
+    } catch (e) {
+      errors.push(`[${label}] ${e.message}`);
+      return null;
+    }
+  };
 
+  if (await attempt('DCaC JSON', tryDCaC)) return;
+  if (await attempt('DCaC HTML', tryDCaCHTML)) return;
+
+  if (debug) {
+    return res.status(503).json({ ok: false, error: 'Fuente de datos no disponible', debug: errors });
+  }
   return res.status(503).json({ ok: false, error: 'Fuente de datos no disponible' });
 }
