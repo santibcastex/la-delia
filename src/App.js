@@ -445,11 +445,23 @@ const MERCADO_CATS = [
   { key: 'inmag',      label: 'INMAG',      color: '#ffd54f' },
 ];
 
-function PrecioEvolucionChart({ data, activeCats }) {
+const ROSGAN_INV_CATS = [
+  { key: 'ternero',       label: 'Ternero',       color: '#42a5f5' },
+  { key: 'ternera',       label: 'Ternera',        color: '#ce93d8' },
+  { key: 'novillo_1_2',   label: 'Novillo 1-2a',  color: '#1e88e5' },
+  { key: 'novillo_2_3',   label: 'Novillo 2-3a',  color: '#0d47a1' },
+  { key: 'vaquillona_inv',label: 'Vaquillona',     color: '#e91e63' },
+];
+const ROSGAN_CRIA_CATS = [
+  { key: 'vaca_cria',     label: 'Vaca c/Cría',   color: '#ef5350' },
+  { key: 'vientre_pren',  label: 'V. Preñez',     color: '#ff9800' },
+];
+
+function PrecioEvolucionChart({ data, activeCats, cats = MERCADO_CATS, unit = 'ARS/kg' }) {
   if (!data || data.length < 2) return null;
   const sorted = [...data].sort((a, b) => a.fecha.localeCompare(b.fecha));
   const n = sorted.length;
-  const activeCatsList = MERCADO_CATS.filter(c => activeCats.has(c.key));
+  const activeCatsList = cats.filter(c => activeCats.has(c.key));
   if (activeCatsList.length === 0) return null;
 
   const PAD_L = 68, PAD_R = 20, PAD_T = 20, PAD_B = 50;
@@ -467,7 +479,7 @@ function PrecioEvolucionChart({ data, activeCats }) {
   const toX = i => PAD_L + i * ptSpacing;
   const toY = v => PAD_T + chartH - ((v - minVal) / range) * chartH;
   const gridVals = [0, 0.25, 0.5, 0.75, 1].map(p => Math.round(minVal + p * range));
-  const fmtY = v => v >= 1000 ? `$${(v / 1000).toFixed(1)}k` : `$${v}`;
+  const fmtY = v => v >= 1_000_000 ? `$${(v / 1_000_000).toFixed(1)}M` : v >= 1000 ? `$${(v / 1000).toFixed(0)}k` : `$${v}`;
 
   return (
     <div style={{ overflowX: 'auto' }}>
@@ -478,7 +490,7 @@ function PrecioEvolucionChart({ data, activeCats }) {
             <text x={PAD_L - 5} y={toY(v) + 4} textAnchor="end" fontSize="9" fill="#555">{fmtY(v)}</text>
           </g>
         ))}
-        <text x={10} y={PAD_T + chartH / 2} textAnchor="middle" fontSize="9" fill="#555" transform={`rotate(-90,10,${PAD_T + chartH / 2})`}>ARS/kg</text>
+        <text x={10} y={PAD_T + chartH / 2} textAnchor="middle" fontSize="9" fill="#555" transform={`rotate(-90,10,${PAD_T + chartH / 2})`}>{unit}</text>
 
         {activeCatsList.map(cat => {
           const pts = sorted.map((d, i) => d[cat.key] != null ? { x: toX(i), y: toY(d[cat.key]) } : null);
@@ -515,6 +527,10 @@ function PrecioEvolucionChart({ data, activeCats }) {
 }
 
 function MercadosPanel() {
+  // Market switcher
+  const [market, setMarket] = useState('liniers');
+
+  // === LINIERS state ===
   const [precios, setPrecios] = useState(null);
   const [cargando, setCargando] = useState(false);
   const [activeCats, setActiveCats] = useState(new Set(['novillito', 'novillo', 'vaca', 'inmag']));
@@ -524,6 +540,20 @@ function MercadosPanel() {
   const [eliminando, setEliminando] = useState(null);
   const [autoFetch, setAutoFetch] = useState({ loading: false, msg: null });
 
+  // === ROSGAN state ===
+  const [rosganTab, setRosganTab] = useState('invernada');
+  const [rosganPrecios, setRosganPrecios] = useState(null);
+  const [rosganCargando, setRosganCargando] = useState(false);
+  const [rosganInvActiveCats, setRosganInvActiveCats] = useState(new Set(['ternero', 'novillo_1_2']));
+  const [rosganCriaActiveCats, setRosganCriaActiveCats] = useState(new Set(['vaca_cria', 'vientre_pren']));
+  const [rosganFormVisible, setRosganFormVisible] = useState(false);
+  const [rosganFormData, setRosganFormData] = useState({
+    fecha: new Date().toISOString().slice(0, 7),
+    ...Object.fromEntries([...ROSGAN_INV_CATS, ...ROSGAN_CRIA_CATS].map(c => [c.key, ''])),
+  });
+  const [rosganGuardando, setRosganGuardando] = useState(false);
+  const [rosganEliminando, setRosganEliminando] = useState(null);
+
   useEffect(() => {
     setCargando(true);
     getDocs(query(collection(db, 'precios_mercado'), orderBy('fecha', 'desc'), limit(60)))
@@ -532,14 +562,31 @@ function MercadosPanel() {
       .finally(() => setCargando(false));
   }, []);
 
+  useEffect(() => {
+    if (market !== 'rosgan' || rosganPrecios !== null) return;
+    setRosganCargando(true);
+    getDocs(query(collection(db, 'precios_rosgan'), orderBy('fecha', 'desc'), limit(60)))
+      .then(snap => setRosganPrecios(snap.docs.map(d => ({ ...d.data(), docId: d.id }))))
+      .catch(() => setRosganPrecios([]))
+      .finally(() => setRosganCargando(false));
+  }, [market]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const latest = precios?.[0];
   const prev = precios?.[1];
+  const rosganLatest = rosganPrecios?.[0];
+  const rosganPrev = rosganPrecios?.[1];
+
+  const curRosganCats = rosganTab === 'invernada' ? ROSGAN_INV_CATS : ROSGAN_CRIA_CATS;
+  const curRosganUnit = rosganTab === 'invernada' ? 'ARS/kg' : 'ARS/cab';
+  const curRosganActiveCats = rosganTab === 'invernada' ? rosganInvActiveCats : rosganCriaActiveCats;
 
   const toggleCat = key => setActiveCats(prev => {
-    const next = new Set(prev);
-    next.has(key) ? next.delete(key) : next.add(key);
-    return next;
+    const next = new Set(prev); next.has(key) ? next.delete(key) : next.add(key); return next;
   });
+  const toggleRosganCat = key => {
+    const setter = rosganTab === 'invernada' ? setRosganInvActiveCats : setRosganCriaActiveCats;
+    setter(prev => { const next = new Set(prev); next.has(key) ? next.delete(key) : next.add(key); return next; });
+  };
 
   const tryAutoFetch = async () => {
     setAutoFetch({ loading: true, msg: null });
@@ -547,7 +594,6 @@ function MercadosPanel() {
       const r = await fetch('/api/mercados');
       const json = await r.json();
       if (json.ok && json.precios) {
-        // Pre-populate form with fetched prices
         setFormData(f => ({
           ...f,
           fecha: json.fecha || f.fecha,
@@ -592,6 +638,31 @@ function MercadosPanel() {
     setEliminando(null);
   };
 
+  const guardarRosgan = async () => {
+    setRosganGuardando(true);
+    try {
+      const entry = {
+        fecha: rosganFormData.fecha,
+        fuente: 'manual',
+        ...Object.fromEntries([...ROSGAN_INV_CATS, ...ROSGAN_CRIA_CATS].map(c => [c.key, parseFloat(rosganFormData[c.key]) || null])),
+      };
+      const ref = await addDoc(collection(db, 'precios_rosgan'), entry);
+      setRosganPrecios(prev => [{ ...entry, docId: ref.id }, ...(prev || [])].sort((a, b) => b.fecha.localeCompare(a.fecha)));
+      setRosganFormVisible(false);
+      setRosganFormData({ fecha: new Date().toISOString().slice(0, 7), ...Object.fromEntries([...ROSGAN_INV_CATS, ...ROSGAN_CRIA_CATS].map(c => [c.key, ''])) });
+    } catch (e) { console.error(e); }
+    setRosganGuardando(false);
+  };
+
+  const eliminarRosgan = async (docId) => {
+    setRosganEliminando(docId);
+    try {
+      await deleteDoc(doc(db, 'precios_rosgan', docId));
+      setRosganPrecios(prev => prev.filter(p => p.docId !== docId));
+    } catch (e) { console.error(e); }
+    setRosganEliminando(null);
+  };
+
   const exportarExcel = () => {
     if (!precios?.length) return;
     const sorted = [...precios].sort((a, b) => a.fecha.localeCompare(b.fecha));
@@ -604,141 +675,327 @@ function MercadosPanel() {
     XLSX.writeFile(wb, `precios_mercado_${new Date().getFullYear()}.xlsx`);
   };
 
+  const exportarRosganExcel = () => {
+    if (!rosganPrecios?.length) return;
+    const sorted = [...rosganPrecios].sort((a, b) => a.fecha.localeCompare(b.fecha));
+    const wb = XLSX.utils.book_new();
+    const allCats = [...ROSGAN_INV_CATS, ...ROSGAN_CRIA_CATS];
+    const rows = [
+      ['Mes', ...allCats.map(c => c.label)],
+      ...sorted.map(p => [p.fecha, ...allCats.map(c => p[c.key] ?? '')]),
+    ];
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rows), 'ROSGAN');
+    XLSX.writeFile(wb, `precios_rosgan_${new Date().getFullYear()}.xlsx`);
+  };
+
   const fmtARS = v => v != null ? `$${Math.round(v).toLocaleString('es-AR')}` : '—';
   const inpStyle = { padding: '0.35rem 0.55rem', backgroundColor: '#1a1a1a', border: '1px solid #2a2a2a', borderRadius: '4px', color: '#ddd', fontSize: '0.8rem' };
+  const fmtMes = fecha => fecha ? new Date(fecha + '-01T12:00:00').toLocaleDateString('es-AR', { month: 'short', year: 'numeric' }) : '—';
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', backgroundColor: '#0d0d0d', overflow: 'hidden' }}>
       {/* Sub-header */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.75rem 1.5rem', backgroundColor: '#111', borderBottom: '1px solid #222', flexShrink: 0, flexWrap: 'wrap' }}>
         <span style={{ fontSize: '0.85rem', fontWeight: '700', color: '#ffd54f', letterSpacing: '0.5px', textTransform: 'uppercase' }}>💰 Mercados</span>
-        <span style={{ fontSize: '0.72rem', color: '#444' }}>Liniers · ROSGAN · ARS/kg vivo</span>
+
+        {/* Market tab switcher */}
+        <div style={{ display: 'flex', backgroundColor: '#1a1a1a', border: '1px solid #2a2a2a', borderRadius: '4px', overflow: 'hidden' }}>
+          {[['liniers', 'LINIERS'], ['rosgan', 'ROSGAN']].map(([id, label]) => (
+            <button key={id} onClick={() => setMarket(id)} style={{
+              padding: '0.28rem 0.85rem', fontSize: '0.72rem', fontWeight: '700',
+              backgroundColor: market === id ? '#2a2a1a' : 'transparent',
+              color: market === id ? '#ffd54f' : '#555',
+              border: 'none', borderRight: id === 'liniers' ? '1px solid #2a2a2a' : 'none',
+              cursor: 'pointer', letterSpacing: '0.4px',
+            }}>{label}</button>
+          ))}
+        </div>
+
+        <span style={{ fontSize: '0.72rem', color: '#444' }}>
+          {market === 'liniers' ? 'Liniers · ARS/kg vivo' : 'Promedios mensuales · ROSGAN'}
+        </span>
+
         <div style={{ marginLeft: 'auto', display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-          <button onClick={exportarExcel} disabled={!precios?.length} style={{ padding: '0.32rem 0.75rem', fontSize: '0.75rem', fontWeight: '600', backgroundColor: 'transparent', color: precios?.length ? '#ffd54f' : '#333', border: `1px solid ${precios?.length ? '#8d6e00' : '#222'}`, borderRadius: '4px', cursor: precios?.length ? 'pointer' : 'default' }}>
-            Exportar Excel
-          </button>
-          <button onClick={tryAutoFetch} disabled={autoFetch.loading} style={{ padding: '0.32rem 0.75rem', fontSize: '0.75rem', fontWeight: '600', backgroundColor: 'transparent', color: '#888', border: '1px solid #2a2a2a', borderRadius: '4px', cursor: 'pointer' }}>
-            {autoFetch.loading ? 'Buscando...' : '↻ Auto'}
-          </button>
-          <button onClick={() => { setFormVisible(v => !v); setAutoFetch({ loading: false, msg: null }); }} style={{ padding: '0.35rem 0.9rem', fontSize: '0.8rem', fontWeight: '700', backgroundColor: formVisible ? '#2a2a1a' : '#1a1a0a', color: '#ffd54f', border: '1px solid #8d6e00', borderRadius: '4px', cursor: 'pointer' }}>
-            {formVisible ? 'Cancelar' : '+ Cargar precios'}
-          </button>
+          {market === 'liniers' && (
+            <>
+              <button onClick={exportarExcel} disabled={!precios?.length} style={{ padding: '0.32rem 0.75rem', fontSize: '0.75rem', fontWeight: '600', backgroundColor: 'transparent', color: precios?.length ? '#ffd54f' : '#333', border: `1px solid ${precios?.length ? '#8d6e00' : '#222'}`, borderRadius: '4px', cursor: precios?.length ? 'pointer' : 'default' }}>
+                Exportar Excel
+              </button>
+              <button onClick={tryAutoFetch} disabled={autoFetch.loading} style={{ padding: '0.32rem 0.75rem', fontSize: '0.75rem', fontWeight: '600', backgroundColor: 'transparent', color: '#888', border: '1px solid #2a2a2a', borderRadius: '4px', cursor: 'pointer' }}>
+                {autoFetch.loading ? 'Buscando...' : '↻ Auto'}
+              </button>
+              <button onClick={() => { setFormVisible(v => !v); setAutoFetch({ loading: false, msg: null }); }} style={{ padding: '0.35rem 0.9rem', fontSize: '0.8rem', fontWeight: '700', backgroundColor: formVisible ? '#2a2a1a' : '#1a1a0a', color: '#ffd54f', border: '1px solid #8d6e00', borderRadius: '4px', cursor: 'pointer' }}>
+                {formVisible ? 'Cancelar' : '+ Cargar precios'}
+              </button>
+            </>
+          )}
+          {market === 'rosgan' && (
+            <>
+              <button onClick={exportarRosganExcel} disabled={!rosganPrecios?.length} style={{ padding: '0.32rem 0.75rem', fontSize: '0.75rem', fontWeight: '600', backgroundColor: 'transparent', color: rosganPrecios?.length ? '#ffd54f' : '#333', border: `1px solid ${rosganPrecios?.length ? '#8d6e00' : '#222'}`, borderRadius: '4px', cursor: rosganPrecios?.length ? 'pointer' : 'default' }}>
+                Exportar Excel
+              </button>
+              <button onClick={() => setRosganFormVisible(v => !v)} style={{ padding: '0.35rem 0.9rem', fontSize: '0.8rem', fontWeight: '700', backgroundColor: rosganFormVisible ? '#2a2a1a' : '#1a1a0a', color: '#ffd54f', border: '1px solid #8d6e00', borderRadius: '4px', cursor: 'pointer' }}>
+                {rosganFormVisible ? 'Cancelar' : '+ Cargar precios'}
+              </button>
+            </>
+          )}
         </div>
       </div>
 
       <div style={{ flex: 1, overflow: 'auto', padding: '1.25rem 1.5rem' }}>
 
-        {/* Form */}
-        {formVisible && (
-          <div style={{ backgroundColor: '#131313', border: '1px solid #2a2a2a', borderRadius: '6px', padding: '1rem', marginBottom: '1.25rem' }}>
-            <div style={{ fontSize: '0.72rem', color: '#666', textTransform: 'uppercase', letterSpacing: '0.4px', marginBottom: '0.75rem' }}>
-              Precios de mercado — ARS/kg vivo
-              {autoFetch.msg && <span style={{ marginLeft: '1rem', color: autoFetch.msg.startsWith('Datos') ? '#4caf50' : '#ef5350', textTransform: 'none', letterSpacing: 0 }}>{autoFetch.msg}</span>}
-            </div>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.75rem', alignItems: 'flex-end' }}>
-              <div>
-                <div style={{ fontSize: '0.62rem', color: '#555', textTransform: 'uppercase', marginBottom: '0.2rem' }}>Fecha</div>
-                <input type="date" value={formData.fecha} onChange={e => setFormData(f => ({ ...f, fecha: e.target.value }))} style={inpStyle} />
-              </div>
-              {MERCADO_CATS.map(cat => (
-                <div key={cat.key}>
-                  <div style={{ fontSize: '0.62rem', color: cat.color, textTransform: 'uppercase', marginBottom: '0.2rem', fontWeight: '700' }}>{cat.label}</div>
-                  <input type="number" min="0" step="1" value={formData[cat.key]} onChange={e => setFormData(f => ({ ...f, [cat.key]: e.target.value }))} placeholder="ARS/kg" style={{ ...inpStyle, width: '92px' }} />
+        {/* ── LINIERS ── */}
+        {market === 'liniers' && (
+          <>
+            {formVisible && (
+              <div style={{ backgroundColor: '#131313', border: '1px solid #2a2a2a', borderRadius: '6px', padding: '1rem', marginBottom: '1.25rem' }}>
+                <div style={{ fontSize: '0.72rem', color: '#666', textTransform: 'uppercase', letterSpacing: '0.4px', marginBottom: '0.75rem' }}>
+                  Precios de mercado — ARS/kg vivo
+                  {autoFetch.msg && <span style={{ marginLeft: '1rem', color: autoFetch.msg.startsWith('Datos') ? '#4caf50' : '#ef5350', textTransform: 'none', letterSpacing: 0 }}>{autoFetch.msg}</span>}
                 </div>
-              ))}
-              <button onClick={guardar} disabled={guardando} style={{ padding: '0.38rem 1.1rem', backgroundColor: '#1a1a0a', color: '#ffd54f', border: '1px solid #8d6e00', borderRadius: '4px', cursor: 'pointer', fontSize: '0.82rem', fontWeight: '700' }}>
-                {guardando ? 'Guardando...' : 'Guardar'}
-              </button>
-            </div>
-          </div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.75rem', alignItems: 'flex-end' }}>
+                  <div>
+                    <div style={{ fontSize: '0.62rem', color: '#555', textTransform: 'uppercase', marginBottom: '0.2rem' }}>Fecha</div>
+                    <input type="date" value={formData.fecha} onChange={e => setFormData(f => ({ ...f, fecha: e.target.value }))} style={inpStyle} />
+                  </div>
+                  {MERCADO_CATS.map(cat => (
+                    <div key={cat.key}>
+                      <div style={{ fontSize: '0.62rem', color: cat.color, textTransform: 'uppercase', marginBottom: '0.2rem', fontWeight: '700' }}>{cat.label}</div>
+                      <input type="number" min="0" step="1" value={formData[cat.key]} onChange={e => setFormData(f => ({ ...f, [cat.key]: e.target.value }))} placeholder="ARS/kg" style={{ ...inpStyle, width: '92px' }} />
+                    </div>
+                  ))}
+                  <button onClick={guardar} disabled={guardando} style={{ padding: '0.38rem 1.1rem', backgroundColor: '#1a1a0a', color: '#ffd54f', border: '1px solid #8d6e00', borderRadius: '4px', cursor: 'pointer', fontSize: '0.82rem', fontWeight: '700' }}>
+                    {guardando ? 'Guardando...' : 'Guardar'}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {cargando && <div style={{ color: '#555', padding: '3rem', textAlign: 'center' }}>Cargando...</div>}
+
+            {!cargando && precios != null && (
+              precios.length === 0 ? (
+                <div style={{ textAlign: 'center', color: '#444', padding: '4rem 2rem', fontSize: '0.85rem', lineHeight: 1.8 }}>
+                  No hay precios cargados todavía.<br />
+                  Usá <strong style={{ color: '#ffd54f' }}>+ Cargar precios</strong> para agregar el primer registro semanal,<br />
+                  o <strong style={{ color: '#888' }}>↻ Auto</strong> para intentar obtenerlos automáticamente.
+                </div>
+              ) : (
+                <>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(145px, 1fr))', gap: '0.65rem', marginBottom: '1.5rem' }}>
+                    {MERCADO_CATS.map(cat => {
+                      const val = latest?.[cat.key];
+                      const prevVal = prev?.[cat.key];
+                      const delta = val != null && prevVal != null ? ((val - prevVal) / prevVal * 100) : null;
+                      return (
+                        <div key={cat.key} style={{ backgroundColor: '#131313', borderTop: `3px solid ${cat.color}`, border: `1px solid ${cat.color}22`, borderRadius: '6px', padding: '0.8rem 1rem' }}>
+                          <div style={{ fontSize: '0.65rem', fontWeight: '700', color: cat.color, textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '0.35rem' }}>{cat.label}</div>
+                          <div style={{ fontSize: '1.55rem', fontWeight: '700', color: '#fff', lineHeight: 1.1, fontVariantNumeric: 'tabular-nums' }}>{fmtARS(val)}</div>
+                          <div style={{ fontSize: '0.62rem', color: '#444', marginTop: '0.2rem' }}>ARS/kg · {latest?.fecha?.slice(5).replace('-', '/')}</div>
+                          {delta != null && (
+                            <div style={{ fontSize: '0.72rem', fontWeight: '700', marginTop: '0.25rem', color: delta > 0 ? '#4caf50' : delta < 0 ? '#ef5350' : '#888' }}>
+                              {delta > 0 ? '▲' : delta < 0 ? '▼' : '●'} {Math.abs(delta).toFixed(1)}% vs sem. ant.
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {precios.length > 1 && (
+                    <div style={{ marginBottom: '1.5rem' }}>
+                      <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap', marginBottom: '0.6rem' }}>
+                        {MERCADO_CATS.map(cat => (
+                          <button key={cat.key} onClick={() => toggleCat(cat.key)} style={{
+                            padding: '0.22rem 0.6rem', fontSize: '0.73rem', fontWeight: '600',
+                            backgroundColor: activeCats.has(cat.key) ? `${cat.color}1a` : 'transparent',
+                            color: activeCats.has(cat.key) ? cat.color : '#333',
+                            border: `1px solid ${activeCats.has(cat.key) ? cat.color : '#1e1e1e'}`,
+                            borderRadius: '4px', cursor: 'pointer',
+                          }}>{cat.label}</button>
+                        ))}
+                      </div>
+                      <div style={{ backgroundColor: '#111', borderRadius: '6px', padding: '0.75rem 0.75rem 0.25rem' }}>
+                        <PrecioEvolucionChart data={precios} activeCats={activeCats} cats={MERCADO_CATS} unit="ARS/kg" />
+                      </div>
+                    </div>
+                  )}
+
+                  <h3 style={{ fontSize: '0.75rem', color: '#555', textTransform: 'uppercase', letterSpacing: '0.5px', margin: '0 0 0.5rem 0' }}>Historial</h3>
+                  <div style={{ overflowX: 'auto' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem', minWidth: '650px' }}>
+                      <thead>
+                        <tr style={{ backgroundColor: '#1a1a1a' }}>
+                          <th style={{ padding: '0.45rem 0.65rem', textAlign: 'left', color: '#555', fontWeight: '600', textTransform: 'uppercase', fontSize: '0.66rem', letterSpacing: '0.4px', borderBottom: '1px solid #2a2a2a' }}>Fecha</th>
+                          {MERCADO_CATS.map(c => (
+                            <th key={c.key} style={{ padding: '0.45rem 0.65rem', textAlign: 'right', color: c.color, fontWeight: '700', textTransform: 'uppercase', fontSize: '0.66rem', letterSpacing: '0.3px', borderBottom: '1px solid #2a2a2a' }}>{c.label}</th>
+                          ))}
+                          <th style={{ width: '30px', borderBottom: '1px solid #2a2a2a' }} />
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {precios.map((p, i) => (
+                          <tr key={p.docId} style={{ backgroundColor: i % 2 === 0 ? '#111' : '#131313', borderBottom: '1px solid #1e1e1e' }}>
+                            <td style={{ padding: '0.4rem 0.65rem', color: '#ccc', fontWeight: '600', whiteSpace: 'nowrap' }}>
+                              {new Date(p.fecha + 'T12:00:00').toLocaleDateString('es-AR', { day: '2-digit', month: 'short', year: 'numeric' })}
+                            </td>
+                            {MERCADO_CATS.map(c => (
+                              <td key={c.key} style={{ padding: '0.4rem 0.65rem', textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: p[c.key] != null ? '#ddd' : '#222' }}>
+                                {fmtARS(p[c.key])}
+                              </td>
+                            ))}
+                            <td style={{ padding: '0.4rem 0.5rem', textAlign: 'right' }}>
+                              <button onClick={() => eliminar(p.docId)} disabled={eliminando === p.docId} title="Eliminar" style={{ background: 'none', border: 'none', color: '#2a2a2a', cursor: 'pointer', fontSize: '0.85rem', padding: '0.1rem 0.3rem' }}>✕</button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
+              )
+            )}
+          </>
         )}
 
-        {cargando && <div style={{ color: '#555', padding: '3rem', textAlign: 'center' }}>Cargando...</div>}
-
-        {!cargando && precios != null && (
-          precios.length === 0 ? (
-            <div style={{ textAlign: 'center', color: '#444', padding: '4rem 2rem', fontSize: '0.85rem', lineHeight: 1.8 }}>
-              No hay precios cargados todavía.<br />
-              Usá <strong style={{ color: '#ffd54f' }}>+ Cargar precios</strong> para agregar el primer registro semanal,<br />
-              o <strong style={{ color: '#888' }}>↻ Auto</strong> para intentar obtenerlos automáticamente.
+        {/* ── ROSGAN ── */}
+        {market === 'rosgan' && (
+          <>
+            {/* Invernada / Cría sub-tabs */}
+            <div style={{ display: 'flex', marginBottom: '1.25rem', backgroundColor: '#131313', border: '1px solid #222', borderRadius: '6px', overflow: 'hidden', width: 'fit-content' }}>
+              {[['invernada', 'Invernada', '$/kg vivo'], ['cria', 'Cría', '$/cabeza']].map(([id, label, unit]) => (
+                <button key={id} onClick={() => setRosganTab(id)} style={{
+                  padding: '0.45rem 1.25rem', fontSize: '0.78rem', fontWeight: '700',
+                  backgroundColor: rosganTab === id ? '#1a2a1a' : 'transparent',
+                  color: rosganTab === id ? '#4caf50' : '#555',
+                  border: 'none', borderRight: id === 'invernada' ? '1px solid #222' : 'none',
+                  cursor: 'pointer',
+                }}>
+                  {label} <span style={{ fontSize: '0.65rem', fontWeight: '400', color: rosganTab === id ? '#4caf5077' : '#2a2a2a' }}>{unit}</span>
+                </button>
+              ))}
             </div>
-          ) : (
-            <>
-              {/* KPI cards */}
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(145px, 1fr))', gap: '0.65rem', marginBottom: '1.5rem' }}>
-                {MERCADO_CATS.map(cat => {
-                  const val = latest?.[cat.key];
-                  const prevVal = prev?.[cat.key];
-                  const delta = val != null && prevVal != null ? ((val - prevVal) / prevVal * 100) : null;
-                  return (
-                    <div key={cat.key} style={{ backgroundColor: '#131313', borderTop: `3px solid ${cat.color}`, border: `1px solid ${cat.color}22`, borderRadius: '6px', padding: '0.8rem 1rem' }}>
-                      <div style={{ fontSize: '0.65rem', fontWeight: '700', color: cat.color, textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '0.35rem' }}>{cat.label}</div>
-                      <div style={{ fontSize: '1.55rem', fontWeight: '700', color: '#fff', lineHeight: 1.1, fontVariantNumeric: 'tabular-nums' }}>{fmtARS(val)}</div>
-                      <div style={{ fontSize: '0.62rem', color: '#444', marginTop: '0.2rem' }}>ARS/kg · {latest?.fecha?.slice(5).replace('-', '/')}</div>
-                      {delta != null && (
-                        <div style={{ fontSize: '0.72rem', fontWeight: '700', marginTop: '0.25rem', color: delta > 0 ? '#4caf50' : delta < 0 ? '#ef5350' : '#888' }}>
-                          {delta > 0 ? '▲' : delta < 0 ? '▼' : '●'} {Math.abs(delta).toFixed(1)}% vs sem. ant.
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
 
-              {/* Chart toggle + chart */}
-              {precios.length > 1 && (
-                <div style={{ marginBottom: '1.5rem' }}>
-                  <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap', marginBottom: '0.6rem' }}>
-                    {MERCADO_CATS.map(cat => (
-                      <button key={cat.key} onClick={() => toggleCat(cat.key)} style={{
-                        padding: '0.22rem 0.6rem', fontSize: '0.73rem', fontWeight: '600',
-                        backgroundColor: activeCats.has(cat.key) ? `${cat.color}1a` : 'transparent',
-                        color: activeCats.has(cat.key) ? cat.color : '#333',
-                        border: `1px solid ${activeCats.has(cat.key) ? cat.color : '#1e1e1e'}`,
-                        borderRadius: '4px', cursor: 'pointer',
-                      }}>{cat.label}</button>
+            {/* ROSGAN form */}
+            {rosganFormVisible && (
+              <div style={{ backgroundColor: '#131313', border: '1px solid #2a2a2a', borderRadius: '6px', padding: '1rem', marginBottom: '1.25rem' }}>
+                <div style={{ fontSize: '0.72rem', color: '#666', textTransform: 'uppercase', letterSpacing: '0.4px', marginBottom: '0.85rem' }}>Cargar promedios mensuales ROSGAN</div>
+                <div style={{ marginBottom: '0.75rem' }}>
+                  <div style={{ fontSize: '0.62rem', color: '#555', textTransform: 'uppercase', marginBottom: '0.2rem' }}>Mes</div>
+                  <input type="month" value={rosganFormData.fecha} onChange={e => setRosganFormData(f => ({ ...f, fecha: e.target.value }))} style={inpStyle} />
+                </div>
+                <div style={{ marginBottom: '0.75rem' }}>
+                  <div style={{ fontSize: '0.62rem', color: '#4caf50', textTransform: 'uppercase', letterSpacing: '0.4px', fontWeight: '700', marginBottom: '0.5rem' }}>Invernada — ARS/kg vivo</div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.65rem' }}>
+                    {ROSGAN_INV_CATS.map(cat => (
+                      <div key={cat.key}>
+                        <div style={{ fontSize: '0.62rem', color: cat.color, textTransform: 'uppercase', marginBottom: '0.2rem', fontWeight: '700' }}>{cat.label}</div>
+                        <input type="number" min="0" step="0.01" value={rosganFormData[cat.key]} onChange={e => setRosganFormData(f => ({ ...f, [cat.key]: e.target.value }))} placeholder="ARS/kg" style={{ ...inpStyle, width: '105px' }} />
+                      </div>
                     ))}
-                  </div>
-                  <div style={{ backgroundColor: '#111', borderRadius: '6px', padding: '0.75rem 0.75rem 0.25rem' }}>
-                    <PrecioEvolucionChart data={precios} activeCats={activeCats} />
                   </div>
                 </div>
-              )}
-
-              {/* Table */}
-              <h3 style={{ fontSize: '0.75rem', color: '#555', textTransform: 'uppercase', letterSpacing: '0.5px', margin: '0 0 0.5rem 0' }}>Historial</h3>
-              <div style={{ overflowX: 'auto' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem', minWidth: '650px' }}>
-                  <thead>
-                    <tr style={{ backgroundColor: '#1a1a1a' }}>
-                      <th style={{ padding: '0.45rem 0.65rem', textAlign: 'left', color: '#555', fontWeight: '600', textTransform: 'uppercase', fontSize: '0.66rem', letterSpacing: '0.4px', borderBottom: '1px solid #2a2a2a' }}>Fecha</th>
-                      {MERCADO_CATS.map(c => (
-                        <th key={c.key} style={{ padding: '0.45rem 0.65rem', textAlign: 'right', color: c.color, fontWeight: '700', textTransform: 'uppercase', fontSize: '0.66rem', letterSpacing: '0.3px', borderBottom: '1px solid #2a2a2a' }}>{c.label}</th>
-                      ))}
-                      <th style={{ width: '30px', borderBottom: '1px solid #2a2a2a' }} />
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {precios.map((p, i) => (
-                      <tr key={p.docId} style={{ backgroundColor: i % 2 === 0 ? '#111' : '#131313', borderBottom: '1px solid #1e1e1e' }}>
-                        <td style={{ padding: '0.4rem 0.65rem', color: '#ccc', fontWeight: '600', whiteSpace: 'nowrap' }}>
-                          {new Date(p.fecha + 'T12:00:00').toLocaleDateString('es-AR', { day: '2-digit', month: 'short', year: 'numeric' })}
-                        </td>
-                        {MERCADO_CATS.map(c => (
-                          <td key={c.key} style={{ padding: '0.4rem 0.65rem', textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: p[c.key] != null ? '#ddd' : '#222' }}>
-                            {fmtARS(p[c.key])}
-                          </td>
-                        ))}
-                        <td style={{ padding: '0.4rem 0.5rem', textAlign: 'right' }}>
-                          <button onClick={() => eliminar(p.docId)} disabled={eliminando === p.docId} title="Eliminar" style={{ background: 'none', border: 'none', color: '#2a2a2a', cursor: 'pointer', fontSize: '0.85rem', padding: '0.1rem 0.3rem' }}>✕</button>
-                        </td>
-                      </tr>
+                <div style={{ marginBottom: '0.85rem' }}>
+                  <div style={{ fontSize: '0.62rem', color: '#ef5350', textTransform: 'uppercase', letterSpacing: '0.4px', fontWeight: '700', marginBottom: '0.5rem' }}>Cría — ARS/cabeza</div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.65rem' }}>
+                    {ROSGAN_CRIA_CATS.map(cat => (
+                      <div key={cat.key}>
+                        <div style={{ fontSize: '0.62rem', color: cat.color, textTransform: 'uppercase', marginBottom: '0.2rem', fontWeight: '700' }}>{cat.label}</div>
+                        <input type="number" min="0" step="1" value={rosganFormData[cat.key]} onChange={e => setRosganFormData(f => ({ ...f, [cat.key]: e.target.value }))} placeholder="ARS/cab" style={{ ...inpStyle, width: '130px' }} />
+                      </div>
                     ))}
-                  </tbody>
-                </table>
+                  </div>
+                </div>
+                <button onClick={guardarRosgan} disabled={rosganGuardando} style={{ padding: '0.38rem 1.1rem', backgroundColor: '#1a1a0a', color: '#ffd54f', border: '1px solid #8d6e00', borderRadius: '4px', cursor: 'pointer', fontSize: '0.82rem', fontWeight: '700' }}>
+                  {rosganGuardando ? 'Guardando...' : 'Guardar'}
+                </button>
               </div>
-            </>
-          )
+            )}
+
+            {rosganCargando && <div style={{ color: '#555', padding: '3rem', textAlign: 'center' }}>Cargando...</div>}
+
+            {!rosganCargando && rosganPrecios != null && (
+              rosganPrecios.length === 0 ? (
+                <div style={{ textAlign: 'center', color: '#444', padding: '4rem 2rem', fontSize: '0.85rem', lineHeight: 1.8 }}>
+                  No hay precios cargados todavía.<br />
+                  Usá <strong style={{ color: '#ffd54f' }}>+ Cargar precios</strong> para agregar el primer registro mensual.
+                </div>
+              ) : (
+                <>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(145px, 1fr))', gap: '0.65rem', marginBottom: '1.5rem' }}>
+                    {curRosganCats.map(cat => {
+                      const val = rosganLatest?.[cat.key];
+                      const prevVal = rosganPrev?.[cat.key];
+                      const delta = val != null && prevVal != null ? ((val - prevVal) / prevVal * 100) : null;
+                      return (
+                        <div key={cat.key} style={{ backgroundColor: '#131313', borderTop: `3px solid ${cat.color}`, border: `1px solid ${cat.color}22`, borderRadius: '6px', padding: '0.8rem 1rem' }}>
+                          <div style={{ fontSize: '0.65rem', fontWeight: '700', color: cat.color, textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '0.35rem' }}>{cat.label}</div>
+                          <div style={{ fontSize: '1.35rem', fontWeight: '700', color: '#fff', lineHeight: 1.1, fontVariantNumeric: 'tabular-nums' }}>{fmtARS(val)}</div>
+                          <div style={{ fontSize: '0.62rem', color: '#444', marginTop: '0.2rem' }}>{curRosganUnit} · {fmtMes(rosganLatest?.fecha)}</div>
+                          {delta != null && (
+                            <div style={{ fontSize: '0.72rem', fontWeight: '700', marginTop: '0.25rem', color: delta > 0 ? '#4caf50' : delta < 0 ? '#ef5350' : '#888' }}>
+                              {delta > 0 ? '▲' : delta < 0 ? '▼' : '●'} {Math.abs(delta).toFixed(1)}% vs mes ant.
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {rosganPrecios.length > 1 && (
+                    <div style={{ marginBottom: '1.5rem' }}>
+                      <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap', marginBottom: '0.6rem' }}>
+                        {curRosganCats.map(cat => (
+                          <button key={cat.key} onClick={() => toggleRosganCat(cat.key)} style={{
+                            padding: '0.22rem 0.6rem', fontSize: '0.73rem', fontWeight: '600',
+                            backgroundColor: curRosganActiveCats.has(cat.key) ? `${cat.color}1a` : 'transparent',
+                            color: curRosganActiveCats.has(cat.key) ? cat.color : '#333',
+                            border: `1px solid ${curRosganActiveCats.has(cat.key) ? cat.color : '#1e1e1e'}`,
+                            borderRadius: '4px', cursor: 'pointer',
+                          }}>{cat.label}</button>
+                        ))}
+                      </div>
+                      <div style={{ backgroundColor: '#111', borderRadius: '6px', padding: '0.75rem 0.75rem 0.25rem' }}>
+                        <PrecioEvolucionChart data={rosganPrecios} activeCats={curRosganActiveCats} cats={curRosganCats} unit={curRosganUnit} />
+                      </div>
+                    </div>
+                  )}
+
+                  <h3 style={{ fontSize: '0.75rem', color: '#555', textTransform: 'uppercase', letterSpacing: '0.5px', margin: '0 0 0.5rem 0' }}>Historial</h3>
+                  <div style={{ overflowX: 'auto' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem', minWidth: '420px' }}>
+                      <thead>
+                        <tr style={{ backgroundColor: '#1a1a1a' }}>
+                          <th style={{ padding: '0.45rem 0.65rem', textAlign: 'left', color: '#555', fontWeight: '600', textTransform: 'uppercase', fontSize: '0.66rem', letterSpacing: '0.4px', borderBottom: '1px solid #2a2a2a' }}>Mes</th>
+                          {curRosganCats.map(c => (
+                            <th key={c.key} style={{ padding: '0.45rem 0.65rem', textAlign: 'right', color: c.color, fontWeight: '700', textTransform: 'uppercase', fontSize: '0.66rem', letterSpacing: '0.3px', borderBottom: '1px solid #2a2a2a' }}>{c.label}</th>
+                          ))}
+                          <th style={{ width: '30px', borderBottom: '1px solid #2a2a2a' }} />
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {rosganPrecios.map((p, i) => (
+                          <tr key={p.docId} style={{ backgroundColor: i % 2 === 0 ? '#111' : '#131313', borderBottom: '1px solid #1e1e1e' }}>
+                            <td style={{ padding: '0.4rem 0.65rem', color: '#ccc', fontWeight: '600', whiteSpace: 'nowrap' }}>
+                              {fmtMes(p.fecha)}
+                            </td>
+                            {curRosganCats.map(c => (
+                              <td key={c.key} style={{ padding: '0.4rem 0.65rem', textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: p[c.key] != null ? '#ddd' : '#222' }}>
+                                {fmtARS(p[c.key])}
+                              </td>
+                            ))}
+                            <td style={{ padding: '0.4rem 0.5rem', textAlign: 'right' }}>
+                              <button onClick={() => eliminarRosgan(p.docId)} disabled={rosganEliminando === p.docId} title="Eliminar" style={{ background: 'none', border: 'none', color: '#2a2a2a', cursor: 'pointer', fontSize: '0.85rem', padding: '0.1rem 0.3rem' }}>✕</button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
+              )
+            )}
+          </>
         )}
       </div>
     </div>
