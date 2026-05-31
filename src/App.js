@@ -553,6 +553,7 @@ function MercadosPanel() {
   });
   const [rosganGuardando, setRosganGuardando] = useState(false);
   const [rosganEliminando, setRosganEliminando] = useState(null);
+  const [rosganAutoFetch, setRosganAutoFetch] = useState({ loading: false, msg: null });
 
   useEffect(() => {
     setCargando(true);
@@ -663,6 +664,30 @@ function MercadosPanel() {
     setRosganEliminando(null);
   };
 
+  const tryAutoFetchRosgan = async () => {
+    setRosganAutoFetch({ loading: true, msg: null });
+    try {
+      const r = await fetch('/api/mercados-rosgan');
+      const json = await r.json();
+      if (json.ok && json.precios) {
+        setRosganFormData(f => ({
+          ...f,
+          fecha: json.fecha || f.fecha,
+          ...Object.fromEntries(
+            ROSGAN_CRIA_CATS.map(c => [c.key, json.precios[c.key] != null ? String(json.precios[c.key]) : f[c.key]])
+          ),
+        }));
+        const mes = json.fecha ? ` (${json.fecha})` : '';
+        setRosganAutoFetch({ loading: false, msg: `Datos de ${json.source}${mes}. Revisá y guardá.` });
+      } else {
+        setRosganAutoFetch({ loading: false, msg: `No disponible: ${json.error || 'sin datos'}. Ingresá manualmente.` });
+      }
+    } catch (e) {
+      setRosganAutoFetch({ loading: false, msg: 'Error de red. Ingresá manualmente.' });
+    }
+    setRosganFormVisible(true);
+  };
+
   const exportarExcel = () => {
     if (!precios?.length) return;
     const sorted = [...precios].sort((a, b) => a.fecha.localeCompare(b.fecha));
@@ -734,6 +759,11 @@ function MercadosPanel() {
               <button onClick={exportarRosganExcel} disabled={!rosganPrecios?.length} style={{ padding: '0.32rem 0.75rem', fontSize: '0.75rem', fontWeight: '600', backgroundColor: 'transparent', color: rosganPrecios?.length ? '#ffd54f' : '#333', border: `1px solid ${rosganPrecios?.length ? '#8d6e00' : '#222'}`, borderRadius: '4px', cursor: rosganPrecios?.length ? 'pointer' : 'default' }}>
                 Exportar Excel
               </button>
+              {rosganTab === 'cria' && (
+                <button onClick={tryAutoFetchRosgan} disabled={rosganAutoFetch.loading} style={{ padding: '0.32rem 0.75rem', fontSize: '0.75rem', fontWeight: '600', backgroundColor: 'transparent', color: '#888', border: '1px solid #2a2a2a', borderRadius: '4px', cursor: 'pointer' }}>
+                  {rosganAutoFetch.loading ? 'Buscando...' : '↻ Auto'}
+                </button>
+              )}
               <button onClick={() => setRosganFormVisible(v => !v)} style={{ padding: '0.35rem 0.9rem', fontSize: '0.8rem', fontWeight: '700', backgroundColor: rosganFormVisible ? '#2a2a1a' : '#1a1a0a', color: '#ffd54f', border: '1px solid #8d6e00', borderRadius: '4px', cursor: 'pointer' }}>
                 {rosganFormVisible ? 'Cancelar' : '+ Cargar precios'}
               </button>
@@ -896,7 +926,10 @@ function MercadosPanel() {
                   </div>
                 </div>
                 <div style={{ marginBottom: '0.85rem' }}>
-                  <div style={{ fontSize: '0.62rem', color: '#ef5350', textTransform: 'uppercase', letterSpacing: '0.4px', fontWeight: '700', marginBottom: '0.5rem' }}>Cría — ARS/cabeza</div>
+                  <div style={{ fontSize: '0.62rem', color: '#ef5350', textTransform: 'uppercase', letterSpacing: '0.4px', fontWeight: '700', marginBottom: '0.5rem' }}>
+                    Cría — ARS/cabeza
+                    {rosganAutoFetch.msg && <span style={{ marginLeft: '1rem', color: rosganAutoFetch.msg.startsWith('Datos') ? '#4caf50' : '#ef5350', textTransform: 'none', letterSpacing: 0, fontWeight: '400' }}>{rosganAutoFetch.msg}</span>}
+                  </div>
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.65rem' }}>
                     {ROSGAN_CRIA_CATS.map(cat => (
                       <div key={cat.key}>
